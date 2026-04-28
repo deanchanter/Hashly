@@ -22,10 +22,10 @@ Source: [v0.1-wysiwyg-editor.md](specs/v0.1-wysiwyg-editor.md)
 **User value:** A developer can run `cargo tauri dev` and see a Hashly window appear on macOS — proves the toolchain is set up.
 
 **Acceptance criteria:**
-- [ ] `cargo tauri dev` launches a native macOS window titled "Hashly".
-- [ ] Window contains static HTML (e.g. `<h1>Hello Hashly</h1>`).
-- [ ] Repo has a working Tauri project structure (Rust core + frontend assets) committed.
-- [ ] README documents the dev command.
+- [x] `cargo tauri dev` launches a native macOS window titled "Hashly".
+- [x] Window contains static HTML (e.g. `<h1>Hello Hashly</h1>`).
+- [x] Repo has a working Tauri project structure (Rust core + frontend assets) committed.
+- [x] README documents the dev command.
 
 **Notes:** No Milkdown yet. Establishes the Tauri scaffolding the rest of the slices build on. Pin a Tauri version.
 
