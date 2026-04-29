@@ -213,8 +213,8 @@ fn frontend_main_ts_imports_prosemirror_baseline_css() {
     let main_ts = read_repo_file("src/main.ts");
 
     assert!(
-        main_ts.contains("@milkdown/prose/lib/style/prosemirror.css"),
-        "expected src/main.ts to import `@milkdown/prose/lib/style/prosemirror.css` so ProseMirror's baseline selection / whitespace / node-selection styles ship with the editor, got:\n{}",
+        main_ts.contains("@milkdown/prose/view/style/prosemirror.css"),
+        "expected src/main.ts to import `@milkdown/prose/view/style/prosemirror.css` so ProseMirror's baseline selection / whitespace / node-selection styles ship with the editor, got:\n{}",
         main_ts
     );
 }
