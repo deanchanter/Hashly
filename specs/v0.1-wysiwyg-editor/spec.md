@@ -91,6 +91,7 @@ _N/A — no new persistence. The `.md` file on disk is the only state. Window si
 - Tauri over pure-Rust GUI (egui / iced / Slint) — pure-Rust would mean building WYSIWYG markdown rendering ourselves, which is a serious undertaking. Tauri lets us reuse a mature JS WYSIWYG lib.
 - Milkdown over Tiptap / ProseMirror direct — picked as the concrete bet; revisit if it doesn't pan out.
 - Reading view is the default surface, edit view is the toggle — driven by the persona being a *reader* of AI-generated docs first.
+- Vitest as the frontend test runner — Rust integration tests + manual host smoke aren't enough to lock down Milkdown wiring (read-only mode, fixture rendering, edit toggle, dirty/save round-trip). See [task #13 / issue #18](https://github.com/deanchanter/Hashly/issues/18). Tests are colocated with `src/`; downstream slices (#3, #6, #7) ship with TS-level coverage rather than leaning on manual checks alone.
 
 **Open questions:**
 

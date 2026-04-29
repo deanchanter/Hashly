@@ -14,6 +14,7 @@ Source: [spec.md](./spec.md)
 10. [Friendly error for binary / non-UTF-8 `.md`](https://github.com/deanchanter/Hashly/issues/10) — Non-text files show a clear message instead of crashing.
 11. [Best-effort render for malformed markdown](https://github.com/deanchanter/Hashly/issues/11) — Pathological markdown renders without crashing.
 12. [Package & ship: `.dmg` GitHub release](https://github.com/deanchanter/Hashly/issues/12) — A downloadable `.dmg` exists on a GitHub release.
+13. [Frontend test harness: Vitest unit tests](https://github.com/deanchanter/Hashly/issues/18) — `npm test` runs a Vitest suite covering frontend behavior.
 
 ---
 
@@ -159,6 +160,20 @@ Source: [spec.md](./spec.md)
 - [ ] Gatekeeper friction is either resolved (signing + notarization) or documented in the release notes with the right-click-Open workaround.
 
 **Notes:** PRD open question on signing/notarization. Acceptable to ship unsigned with documented workaround for v0.1; revisit if friction is too high.
+
+### 13. Frontend test harness: Vitest unit tests
+
+**User value:** Maintainers can lock down frontend behavior with fast unit tests, catching regressions in the Milkdown wiring (read-only mode, fixture rendering, edit toggle) before they hit a manual host smoke.
+
+**Acceptance criteria:**
+- [ ] Vitest + jsdom (or happy-dom) added as devDependencies; `vitest.config.ts` configured.
+- [ ] `npm test` runs Vitest and exits 0 on a green suite.
+- [ ] At least one meaningful passing test against existing frontend behavior (e.g. `mountEditor` produces a read-only Milkdown instance, `aria-readonly="true"` on the editor root).
+- [ ] Test files colocated under `src/` (e.g. `src/main.test.ts`) or `src/__tests__/` — pick one and document.
+- [ ] README documents `npm test` alongside the existing `cargo test` line.
+- [ ] CI (or local `cargo test` orchestration) is updated so frontend tests run as part of the standard verification flow, or a follow-up issue is filed if CI doesn't exist yet.
+
+**Notes:** Depends on #2. Today the frontend is only verified via Rust integration tests (`src-tauri/tests/`) + manual `cargo tauri dev` smoke. A Vitest layer lets future tasks (#3 fixture rendering, #6 edit toggle, #7 dirty/save round-trip) ship with TS-level coverage instead of leaning entirely on manual checks. Pick `jsdom` if Milkdown's ProseMirror needs full DOM APIs; `happy-dom` is faster but has gaps — verify before committing.
 
 ---
 
