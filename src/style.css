@@ -1,0 +1,12 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+#editor {
+  padding: 2rem;
+  max-width: 720px;
+  margin: 0 auto;
+}
