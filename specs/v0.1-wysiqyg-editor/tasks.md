@@ -1,6 +1,6 @@
 # Tasks: Hashly v0.1 — WYSIWYG Markdown Reader
 
-Source: [v0.1-wysiwyg-editor.md](specs/v0.1-wysiwyg-editor.md)
+Source: [spec.md](./spec.md)
 
 1. [Tauri window opens with hello-world HTML](https://github.com/deanchanter/Hashly/issues/1) — A developer can launch a Hashly window via `cargo tauri dev`.
 2. [Milkdown mounts and renders a one-line markdown string read-only](https://github.com/deanchanter/Hashly/issues/2) — The app shows actual rendered markdown via Milkdown.
@@ -34,12 +34,12 @@ Source: [v0.1-wysiwyg-editor.md](specs/v0.1-wysiwyg-editor.md)
 **User value:** The app shows actual rendered markdown (not raw HTML), proving the chosen WYSIWYG library works inside Tauri's WebView.
 
 **Acceptance criteria:**
-- [ ] Window contents replaced by a Milkdown instance.
-- [ ] Milkdown renders the string `# Hello` as a styled H1.
-- [ ] Editor is read-only (no caret, can't type).
-- [ ] No console errors in the WebView.
+- [x] Window contents replaced by a Milkdown instance.
+- [x] Milkdown renders the string `# Hello` as a styled H1.
+- [x] Editor is read-only (no caret, can't type).
+- [ ] No console errors in the WebView. _(awaiting manual host smoke — `cargo tauri dev` + WebView devtools)_
 
-**Notes:** Depends on #1. Decision point: confirm Milkdown integrates cleanly with Tauri's system WebView (PRD-flagged risk).
+**Notes:** Depends on #1. Confirmed Milkdown integrates with Tauri's system WebView. Adopted Vite + TypeScript (lifted the "no JS toolchain" v0.1 constraint). ProseMirror baseline CSS (`@milkdown/prose/view/style/prosemirror.css`) ships; `aria-readonly="true"` set on the editor root via `EditorProps.attributes` to compensate for Milkdown's hardcoded `role="textbox"`. Verify pass surfaced six follow-ups (production build hardening, CSP, UX polish, README troubleshooting, dragover bypass, heading-id collisions) — see "Follow-ups from #2 verify pass" at the bottom.
 
 ### 3. Render a full CommonMark fixture read-only
 
@@ -50,7 +50,7 @@ Source: [v0.1-wysiwyg-editor.md](specs/v0.1-wysiwyg-editor.md)
 - [ ] All elements render correctly in the read-only Milkdown view.
 - [ ] Visual check passes in both light and dark system appearance (even if theming isn't wired yet — just confirm it doesn't break).
 
-**Notes:** Depends on #2. Fixture will be reused as a manual smoke test for later slices.
+**Notes:** Depends on #2. Fixture will be reused as a manual smoke test for later slices. **Blocked by follow-up:** "Heading id collisions: commonmark slugger emits duplicates" — fixture must include duplicate heading text and assert unique ids.
 
 ### 4. Open a `.md` file via File > Open
 
@@ -63,7 +63,7 @@ Source: [v0.1-wysiwyg-editor.md](specs/v0.1-wysiwyg-editor.md)
 - [ ] Window title updates to the filename.
 - [ ] Opens in <1s for a typical (<1MB) spec doc.
 
-**Notes:** Depends on #3. File reading happens in Rust; pass content to the WebView.
+**Notes:** Depends on #3. File reading happens in Rust; pass content to the WebView. **Blocked by follow-ups:** "Set CSP on Tauri WebView before #4 lands" (security — arbitrary markdown rendering needs CSP set first) and "ProseMirror dragover bypass surfaces if Tauri dragDropEnabled is flipped" (must install a window-level dragover guard before any HTML5 drag-drop work).
 
 ### 5. Open a `.md` file via Finder double-click
 
@@ -159,3 +159,16 @@ Source: [v0.1-wysiwyg-editor.md](specs/v0.1-wysiwyg-editor.md)
 - [ ] Gatekeeper friction is either resolved (signing + notarization) or documented in the release notes with the right-click-Open workaround.
 
 **Notes:** PRD open question on signing/notarization. Acceptable to ship unsigned with documented workaround for v0.1; revisit if friction is too high.
+
+---
+
+## Follow-ups from #2 verify pass
+
+Filed as separate GitHub issues (numbers assigned at `gh issue create` time — see `/.claude/file-followup-issues.sh`). Not part of the v0.1 task list above; tracked here only so dependencies on #3 and #4 are visible.
+
+- **Tighten production build: enable sourcemaps + tsconfig strictness** — dev quality.
+- **Set CSP on Tauri WebView before #4 lands** — security; **blocks #4**.
+- **UX polish: read-only editor shows I-beam cursor + isn't keyboard-focusable** — a11y/UX.
+- **README: document `cargo tauri dev` failure modes (port 1420 busy, missing `node_modules`)** — DX.
+- **ProseMirror dragover bypass surfaces if Tauri `dragDropEnabled` is flipped** — **blocks #4** if it uses HTML5 drag-drop.
+- **Heading id collisions: commonmark slugger emits duplicates** — **blocks #3**.

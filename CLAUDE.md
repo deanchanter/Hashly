@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Hashly** — a WYSIWYG markdown reader for macOS, built with [Tauri](https://tauri.app/) v2. Rust core + Vite/TypeScript frontend wiring up [Milkdown](https://milkdown.dev/). The repo was previously named `pomodoro`; update any stale references.
 
-Specs live in `specs/` (`hashly-vision.md` for product direction, `v0.1-wysiwyg-editor.md` for the current milestone). `tasks.md` tracks the v0.1 task breakdown.
+Specs live in `specs/`. Product direction: `specs/hashly-vision.md`. Current milestone: `specs/v0.1-wysiqyg-editor/` — contains `spec.md` (PRD) and `tasks.md` (task breakdown). Note: the directory name has a typo (`wysiqyg`); kept as-is until renamed deliberately.
 
 ## Commands
 
