@@ -29,4 +29,7 @@ This builds the Rust core, runs Vite (`npm run dev`) for the frontend via Tauri'
 
 ```sh
 cargo test
+npm test
 ```
+
+Frontend unit tests live in `src/__tests__/` and run via Vitest + jsdom.
