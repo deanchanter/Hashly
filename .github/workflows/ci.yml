@@ -15,3 +15,10 @@ jobs:
           node-version: '22'
       - run: npm ci
       - run: npm test
+
+  cargo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
