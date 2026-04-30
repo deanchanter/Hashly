@@ -33,48 +33,169 @@ fn read_repo_file(rel: &str) -> String {
 }
 
 /// Strip `//` line comments and `/* ... */` block comments from a TS/JSON
-/// source string. Mirrors the helper in `frontend.rs` — duplicated here
-/// because Rust integration test files are independent compilation units.
-/// This is intentionally a hand-rolled, stdlib-only stripper. It does NOT
-/// try to be a full TS/JSON parser; in particular it ignores `//` or `/*`
-/// inside string literals or regexes. Sufficient for asserting literal
-/// substrings of TS/JSON we ourselves write, and defends against a
-/// contributor "preserving" the contract literal in a comment while
-/// deleting the real config.
+/// source string while respecting string-literal boundaries.
+///
+/// A naïve "find `//` or `/*` and skip" stripper is bitten by perfectly
+/// legitimate code — e.g. vite.config.ts contains the glob string literal
+/// `'**/src-tauri/**'`, where the `/*` inside the string would put a naïve
+/// stripper into block-comment mode and eat the rest of the file (including
+/// our `sourcemap: true` assertion target). The team's prior `frontend.rs`
+/// helper had this latent bug; the build_strictness tests exposed it.
+///
+/// This stripper is a small state machine over five states:
+///   - Code           — default; recognises `//`, `/*`, `'`, `"`, `` ` ``
+///   - LineComment    — until `\n` (newline is preserved in output)
+///   - BlockComment   — until matching `*/`
+///   - String         — single, double, or backtick; copies verbatim, honors
+///                      `\` escapes (the next char is copied even if it's a
+///                      quote of the same kind)
+///
+/// Limitations (documented, accepted):
+///   - Regex literals `/.../` are NOT recognised. A `/` followed by `*` or
+///     `/` inside a regex would be misinterpreted. None of the files we
+///     inspect contain regex literals.
+///   - Template-literal interpolations (`${ ... }` inside backticks) are
+///     treated as part of the string — comments inside an interpolation are
+///     NOT stripped. None of the files we inspect use interpolations.
+///   - HTML comments / shebangs / etc. are not handled (irrelevant here).
+///
+/// Mirrors (and supersedes the buggy version of) the helper in `frontend.rs`
+/// — duplicated here because Rust integration test files are independent
+/// compilation units. If/when frontend.rs's helper is hardened, the two
+/// should converge.
 fn strip_comments(src: &str) -> String {
+    enum State {
+        Code,
+        LineComment,
+        BlockComment,
+        // String state: tracks the closing quote char.
+        Str(char),
+    }
+
     let mut out = String::with_capacity(src.len());
+    let mut state = State::Code;
     let mut chars = src.chars().peekable();
+
     while let Some(c) = chars.next() {
-        if c == '/' {
-            match chars.peek() {
-                Some('/') => {
-                    chars.next();
-                    while let Some(&nc) = chars.peek() {
-                        if nc == '\n' {
-                            break;
+        match state {
+            State::Code => {
+                match c {
+                    '/' => match chars.peek() {
+                        Some('/') => {
+                            chars.next();
+                            state = State::LineComment;
                         }
+                        Some('*') => {
+                            chars.next();
+                            state = State::BlockComment;
+                        }
+                        _ => out.push(c),
+                    },
+                    '\'' | '"' | '`' => {
+                        out.push(c);
+                        state = State::Str(c);
+                    }
+                    _ => out.push(c),
+                }
+            }
+            State::LineComment => {
+                if c == '\n' {
+                    out.push(c); // preserve newline so line-based logic still works
+                    state = State::Code;
+                }
+                // else: drop the comment char.
+            }
+            State::BlockComment => {
+                if c == '*' {
+                    if let Some(&'/') = chars.peek() {
                         chars.next();
+                        state = State::Code;
                     }
-                    continue;
                 }
-                Some('*') => {
-                    chars.next();
-                    while let Some(nc) = chars.next() {
-                        if nc == '*' {
-                            if let Some(&'/') = chars.peek() {
-                                chars.next();
-                                break;
-                            }
-                        }
+                // else: drop the comment char.
+            }
+            State::Str(quote) => {
+                out.push(c);
+                if c == '\\' {
+                    // Escape: copy the next char verbatim and DON'T let it
+                    // close the string. This handles `'\''`, `"\""`, etc.
+                    if let Some(esc) = chars.next() {
+                        out.push(esc);
                     }
-                    continue;
+                } else if c == quote {
+                    state = State::Code;
                 }
-                _ => {}
             }
         }
-        out.push(c);
     }
+
     out
+}
+
+#[test]
+fn strip_comments_preserves_text_inside_string_literals() {
+    // Regression test for the bug builder hit on slice A: a `/*` sequence
+    // inside a string literal must NOT trip the block-comment state.
+    // This is the exact pattern in vite.config.ts's watch.ignored glob.
+    let src = r#"
+        watch: { ignored: ['**/src-tauri/**'] },
+        build: { sourcemap: true },
+    "#;
+    let stripped = strip_comments(src);
+    assert!(
+        stripped.contains("sourcemap: true"),
+        "strip_comments must not eat content after a /* sequence inside a string literal. Got:\n{}",
+        stripped
+    );
+    assert!(
+        stripped.contains("'**/src-tauri/**'"),
+        "strip_comments must preserve string-literal contents verbatim. Got:\n{}",
+        stripped
+    );
+}
+
+#[test]
+fn strip_comments_still_strips_real_line_and_block_comments() {
+    // Confirm the hardening didn't break the original purpose. A `//` and
+    // a `/* ... */` outside any string literal must still be stripped.
+    let src = r#"
+        // a line comment that mentions sourcemap: false
+        const x = 1;
+        /* a block
+           comment that mentions sourcemap: false */
+        const y = 2;
+    "#;
+    let stripped = strip_comments(src);
+    assert!(
+        !stripped.contains("sourcemap: false"),
+        "strip_comments must still strip both line and block comments. Got:\n{}",
+        stripped
+    );
+    assert!(
+        stripped.contains("const x = 1;") && stripped.contains("const y = 2;"),
+        "strip_comments must preserve real code. Got:\n{}",
+        stripped
+    );
+}
+
+#[test]
+fn strip_comments_honors_backslash_escape_in_strings() {
+    // `'\\''` — an escaped quote inside a single-quoted string — must NOT
+    // close the string early. Otherwise the rest of the line falls into
+    // Code state and a real `// comment` after it would be incorrectly
+    // stripped.
+    let src = r"const s = '\''; // trailing comment with sourcemap: false";
+    let stripped = strip_comments(src);
+    assert!(
+        !stripped.contains("sourcemap: false"),
+        "trailing line-comment after a string with an escaped quote must still be stripped. Got:\n{}",
+        stripped
+    );
+    assert!(
+        stripped.contains(r"'\''"),
+        "string-literal contents (incl. the escape sequence) must be preserved. Got:\n{}",
+        stripped
+    );
 }
 
 // =====================================================================
