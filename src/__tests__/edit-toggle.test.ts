@@ -1015,6 +1015,8 @@ describe('Issue #6 fix-loop C7 — race / re-entrancy guard on toggle', () => {
     ).toBe('true');
   });
 
+  // Placeholder anchor for the next describe (the fresh-click test stays here).
+  // (kept structure stable so insertions below align cleanly)
   it('after the in-flight resolves, a fresh click works normally (guard releases — does not get stuck)', async () => {
     // Pins the OTHER half of the C7 contract: the guard mustn't be a
     // permanent lockout. After the first click's toggle completes, the
@@ -1044,5 +1046,73 @@ describe('Issue #6 fix-loop C7 — race / re-entrancy guard on toggle', () => {
       editor.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
       'expected the post-resolution click to flip back to read mode — the re-entrancy guard must release after the in-flight toggle completes (otherwise the toggle is permanently locked out after a single race). Issue #6 fix-loop C7.',
     ).toBe('false');
+  });
+});
+
+// C5 — Focus restoration after toggle.
+//
+// Keyboard-only users press the toggle (with Enter / Space) to enter edit
+// mode, then expect to immediately start typing — without an extra Tab
+// or click to focus the editor. Conversely, when they exit edit mode,
+// focus should return to the toggle so they don't lose their place in
+// the keyboard navigation chain. Without this, the toggle is technically
+// usable but practically broken for keyboard users.
+//
+// Pinned contract:
+//   - After entering edit mode, document.activeElement is (or is a
+//     descendant of) the .ProseMirror root.
+//   - After exiting edit mode, document.activeElement is the toggle
+//     button.
+
+describe('Issue #6 fix-loop C5 — focus restoration after toggle', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '<div id="editor"></div>';
+    document.title = 'Hashly';
+  });
+
+  it('after entering edit mode, document.activeElement is (or is inside) the .ProseMirror root', async () => {
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    toggle.click();
+    // Wait long enough for the destroy + re-mount + .focus() sequence.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const proseMirror = document.querySelector<HTMLElement>('.ProseMirror');
+    expect(
+      proseMirror,
+      'precondition: .ProseMirror must be in DOM after entering edit mode',
+    ).not.toBeNull();
+
+    const active = document.activeElement;
+    const isFocused = active === proseMirror || proseMirror!.contains(active);
+    expect(
+      isFocused,
+      `expected document.activeElement to be (or inside) the .ProseMirror root after entering edit mode (Issue #6 fix-loop C5 — without focus, a keyboard user has to Tab back to the editor before they can type). activeElement was: <${active?.tagName.toLowerCase() ?? 'null'}> id="${active?.id ?? ''}" class="${active?.className ?? ''}".`,
+    ).toBe(true);
+  });
+
+  it('after exiting edit mode, document.activeElement is the toggle button itself', async () => {
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(
+      document.activeElement,
+      `expected document.activeElement === the toggle button after exiting edit mode (Issue #6 fix-loop C5 — preserves keyboard navigation; the user pressed the toggle, focus should return to it not jump to <body>). activeElement was: <${document.activeElement?.tagName.toLowerCase() ?? 'null'}>.`,
+    ).toBe(toggle);
   });
 });
