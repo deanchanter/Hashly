@@ -397,3 +397,53 @@ fn npx_tsc_no_emit_exits_zero() {
         String::from_utf8_lossy(&output.stderr),
     );
 }
+
+// =====================================================================
+// Slice C-CI — gate `tsc --noEmit` continuously via the npm `test` script.
+// Without this, the CI npm job (which runs `npm test`) never invokes tsc,
+// and the strictness flags can silently regress on `main`.
+// =====================================================================
+
+#[test]
+fn npm_test_script_runs_tsc_noemit_before_vitest() {
+    // Issue #14 AC #3: `tsc --noEmit` must keep passing — which only stays
+    // enforced if CI runs it on every PR. The CI npm job runs `npm test`,
+    // so the contract is: `package.json` `scripts.test` must invoke
+    // `tsc --noEmit` BEFORE invoking `vitest`, so a tsc failure short-
+    // circuits before vitest masks it.
+    let raw = read_repo_file("package.json");
+    let pkg: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("package.json is not valid JSON: {}", e));
+    let test_script = pkg
+        .get("scripts")
+        .and_then(|s| s.get("test"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "expected `scripts.test` string in package.json (Issue #14 AC #3 — CI gates tsc via npm test), got: {:?}",
+                pkg.get("scripts")
+            )
+        });
+
+    let tsc_idx = test_script.find("tsc --noEmit");
+    let vitest_idx = test_script.find("vitest");
+
+    assert!(
+        tsc_idx.is_some(),
+        "expected `package.json` `scripts.test` to include `tsc --noEmit` so the CI npm job gates tsc (Issue #14 AC #3). Got scripts.test = {:?}",
+        test_script
+    );
+    assert!(
+        vitest_idx.is_some(),
+        "expected `package.json` `scripts.test` to still invoke `vitest` (Issue #14 AC #4 — npm test stays green). Got scripts.test = {:?}",
+        test_script
+    );
+
+    let tsc_idx = tsc_idx.unwrap();
+    let vitest_idx = vitest_idx.unwrap();
+    assert!(
+        tsc_idx < vitest_idx,
+        "expected `tsc --noEmit` to run BEFORE `vitest` in `scripts.test` so a tsc failure short-circuits (Issue #14 AC #3). Got scripts.test = {:?} (tsc at {}, vitest at {})",
+        test_script, tsc_idx, vitest_idx
+    );
+}
