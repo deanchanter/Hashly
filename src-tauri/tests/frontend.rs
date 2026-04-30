@@ -485,6 +485,74 @@ fn frontend_main_ts_overrides_heading_id_generator_for_collision_suffix() {
 }
 
 #[test]
+fn frontend_main_ts_installs_window_level_dragover_drop_preventdefault_guard() {
+    // Issue #16 — Window-level dragover/drop guard.
+    //
+    // Background: ProseMirror only `preventDefault`s drag events when the
+    // editor is editable. In our read-only mode (`editable: () => false`)
+    // it ignores them, so a file dropped onto the editor lets the WebView
+    // navigate to `file://...`, replacing the page entirely. Tauri's
+    // `dragDropEnabled: true` (default) currently masks this by
+    // intercepting native OS drag-drop before it reaches the WebView, but
+    // Issue #4 will flip that flag to `false` so HTML5 drop reaches the
+    // DOM (we want the future Markdown-image drop UX). The window-level
+    // guard MUST land before #4, otherwise a single mis-aimed file drop
+    // blanks the app.
+    //
+    // The dynamic vitest tests in `src/__tests__/main.test.ts` already
+    // assert the runtime behavior (defaultPrevented + idempotency). This
+    // static-contract test is the cargo-side belt to vitest's suspenders:
+    // it catches a contributor who deletes the listener wiring even when
+    // vitest is unavailable in CI (e.g. the npm job is broken / disabled).
+    //
+    // The contract pinned here:
+    //   - A real (not commented-out) `addEventListener('dragover', ...)`
+    //     call in `src/main.ts`. Both quote styles (`'dragover'` and
+    //     `"dragover"`) are accepted because TypeScript permits both.
+    //   - Same for `addEventListener('drop', ...)`.
+    //   - A real `preventDefault()` call. This is the half that actually
+    //     stops the file:// navigation; without it, even a registered
+    //     listener is a no-op.
+    //
+    // Comments are stripped first (matching the aria-readonly defense
+    // pattern above) so a commented-out ghost like
+    //   // window.addEventListener('dragover', ...)
+    // does NOT satisfy the assertion.
+    let main_ts = read_repo_file("src/main.ts");
+    let stripped = common::strip_comments(&main_ts);
+    let normalized: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
+
+    let has_dragover_single = normalized.contains("addEventListener('dragover'");
+    let has_dragover_double = normalized.contains("addEventListener(\"dragover\"");
+    assert!(
+        has_dragover_single || has_dragover_double,
+        "expected src/main.ts to register a `dragover` listener via `addEventListener('dragover', ...)` \
+         (Issue #16 AC #1) so a file dragged over the read-only editor cannot trigger a WebView \
+         navigation to file://... After comment-strip:\n{}",
+        stripped
+    );
+
+    let has_drop_single = normalized.contains("addEventListener('drop'");
+    let has_drop_double = normalized.contains("addEventListener(\"drop\"");
+    assert!(
+        has_drop_single || has_drop_double,
+        "expected src/main.ts to register a `drop` listener via `addEventListener('drop', ...)` \
+         (Issue #16 AC #1). Both `dragover` AND `drop` must be guarded — preventing only one \
+         is the same as preventing neither for the purposes of stopping the file:// navigation. \
+         After comment-strip:\n{}",
+        stripped
+    );
+
+    assert!(
+        normalized.contains("preventDefault()"),
+        "expected src/main.ts to call `preventDefault()` inside the dragover/drop guard \
+         (Issue #16 AC #1). Registering a listener without calling preventDefault is a no-op \
+         — the WebView still navigates to file://... After comment-strip:\n{}",
+        stripped
+    );
+}
+
+#[test]
 fn frontend_main_ts_sets_tabindex_0_on_editor_root() {
     // Issue #15 AC #2: `contenteditable="false"` strips the implicit tab-stop
     // that ProseMirror would otherwise have. Without `tabindex="0"` on the

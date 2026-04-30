@@ -34,8 +34,21 @@ export async function mountEditor(host: HTMLElement, content: string): Promise<E
     .create();
 }
 
+let dragDropGuardInstalled = false;
+
+export function installDragDropGuard(target: Window | Document = window): void {
+  if (dragDropGuardInstalled) return;
+  dragDropGuardInstalled = true;
+  const stop = (e: Event) => {
+    e.preventDefault();
+  };
+  target.addEventListener('dragover', stop);
+  target.addEventListener('drop', stop);
+}
+
 export function bootstrap(): void {
   if (typeof document === 'undefined') return;
+  installDragDropGuard();
   const host = document.getElementById('editor');
   if (!host) {
     console.warn('[hashly] #editor host element not found; mountEditor not auto-invoked');

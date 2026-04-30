@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mountEditor } from '../main';
 
 // Issue #18 — AC #3: at least one meaningful passing test against existing
@@ -119,5 +119,131 @@ describe('mountEditor', () => {
       tabbableRoot,
       'expected the .ProseMirror root to carry tabindex="0" (Issue #15 AC #2) so keyboard-only users can Tab to the read-only doc and use Space/PgDn/arrow keys to scroll. tabindex="-1" is NOT acceptable — it makes the element programmatically focusable but unreachable via Tab.',
     ).not.toBeNull();
+  });
+});
+
+describe('Issue #16 — installDragDropGuard (window-level dragover/drop preventDefault)', () => {
+  // Background: ProseMirror only `preventDefault`s drag events when the editor
+  // is editable. In our read-only mode (`editable: () => false`) it leaves
+  // them alone, so a file dropped onto the editor causes the WebView to
+  // navigate to `file://...` — replacing the page entirely. Tauri's
+  // `dragDropEnabled: true` (default) currently intercepts native OS drag-drop
+  // BEFORE it reaches the WebView, hiding the bug. Issue #4 will flip
+  // `dragDropEnabled` to `false` so HTML5 drag-drop reaches the DOM (we want
+  // the future Markdown-image drop UX). The window-level guard MUST land
+  // before #4, otherwise a single mis-aimed file drop blanks the app.
+  //
+  // The contract pinned here:
+  //   1. `installDragDropGuard()` is a named export of `src/main.ts`.
+  //   2. After invocation, `dragover` and `drop` events dispatched on `window`
+  //      have `defaultPrevented === true` (i.e. a listener was registered AND
+  //      it called `event.preventDefault()`).
+  //   3. The function is idempotent — calling it N times still results in
+  //      exactly one listener per event type. Without idempotency, hot-reload
+  //      / Vite HMR would leak listeners on every module re-evaluation.
+  //
+  // Test isolation note: `vi.resetModules()` reinitialises the module-level
+  // "already installed" flag so each test starts from a clean baseline. This
+  // matches the pattern used in `src/__tests__/bootstrap.test.ts`.
+
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '';
+  });
+
+  it('is exported as a function from src/main.ts', async () => {
+    // RED until builder lands `export function installDragDropGuard`. This
+    // test exists separately from the behavioral checks below so the failure
+    // mode "missing export" surfaces with a precise message rather than as
+    // an opaque "cannot read property of undefined" inside another test.
+    const mod = (await import('../main')) as unknown as {
+      installDragDropGuard?: unknown;
+    };
+    expect(
+      typeof mod.installDragDropGuard,
+      'expected `installDragDropGuard` to be exported as a function from src/main.ts (Issue #16 AC #1)',
+    ).toBe('function');
+  });
+
+  it('calls preventDefault on a window dragover event after installation', async () => {
+    // RED until the dragover listener is registered. We dispatch a
+    // *cancelable* Event so `preventDefault()` actually flips
+    // `defaultPrevented` to true (an event with `cancelable: false` would
+    // silently no-op preventDefault — checking that flag on a non-cancelable
+    // event is a tautology).
+    const { installDragDropGuard } = (await import('../main')) as unknown as {
+      installDragDropGuard: (target?: Window | Document) => void;
+    };
+    installDragDropGuard();
+
+    const ev = new Event('dragover', { cancelable: true });
+    window.dispatchEvent(ev);
+
+    expect(
+      ev.defaultPrevented,
+      'expected a dragover dispatched on window to be defaultPrevented after installDragDropGuard() — without the guard, the WebView would treat a dropped file as a navigation to file://... and replace the page (Issue #16 AC #1).',
+    ).toBe(true);
+  });
+
+  it('calls preventDefault on a window drop event after installation', async () => {
+    // Companion to the dragover test: `dragover.preventDefault()` is what
+    // makes an element a valid drop target, but `drop.preventDefault()` is
+    // what suppresses the WebView's default file-handling behavior. BOTH
+    // must be guarded — preventing only one is the same as preventing
+    // neither for the purposes of stopping the file:// navigation.
+    const { installDragDropGuard } = (await import('../main')) as unknown as {
+      installDragDropGuard: (target?: Window | Document) => void;
+    };
+    installDragDropGuard();
+
+    const ev = new Event('drop', { cancelable: true });
+    window.dispatchEvent(ev);
+
+    expect(
+      ev.defaultPrevented,
+      'expected a drop dispatched on window to be defaultPrevented after installDragDropGuard() — without the guard, a file dropped on the read-only editor navigates the WebView to file://... and blanks the app (Issue #16 AC #1).',
+    ).toBe(true);
+  });
+
+  it('is idempotent — registers exactly one listener per event type across multiple calls', async () => {
+    // Without idempotency, Vite's HMR re-evaluates `src/main.ts` on edit and
+    // each evaluation would push another (dragover, drop) pair onto the
+    // window. After a few saves the dispatch chain runs N redundant
+    // preventDefaults. Pinning idempotency here forces the builder to gate
+    // the registrations with a module-level flag.
+    //
+    // We spy on `window.addEventListener` AFTER the spy is installed (so
+    // the spy sees the install calls) and AFTER `vi.resetModules()` reset
+    // the module-level flag (so the first call is the one that actually
+    // registers). We then filter by event type so unrelated listener
+    // registrations from jsdom internals or other modules don't pollute
+    // the count.
+    const { installDragDropGuard } = (await import('../main')) as unknown as {
+      installDragDropGuard: (target?: Window | Document) => void;
+    };
+
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    try {
+      installDragDropGuard();
+      installDragDropGuard();
+      installDragDropGuard();
+
+      const draggish = addSpy.mock.calls.filter(
+        ([type]) => type === 'dragover' || type === 'drop',
+      );
+
+      expect(
+        draggish.length,
+        `expected exactly 2 dragover/drop listener registrations across 3 install calls (one per event type, gated by an "already installed" flag); got ${draggish.length}: ${JSON.stringify(draggish.map(([t]) => t))} (Issue #16 idempotency).`,
+      ).toBe(2);
+
+      const types = draggish.map(([t]) => t).sort();
+      expect(
+        types,
+        'expected exactly one dragover and one drop registration',
+      ).toEqual(['dragover', 'drop']);
+    } finally {
+      addSpy.mockRestore();
+    }
   });
 });
