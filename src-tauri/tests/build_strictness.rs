@@ -22,6 +22,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod common;
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
@@ -32,171 +34,10 @@ fn read_repo_file(rel: &str) -> String {
         .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e))
 }
 
-/// Strip `//` line comments and `/* ... */` block comments from a TS/JSON
-/// source string while respecting string-literal boundaries.
-///
-/// A naïve "find `//` or `/*` and skip" stripper is bitten by perfectly
-/// legitimate code — e.g. vite.config.ts contains the glob string literal
-/// `'**/src-tauri/**'`, where the `/*` inside the string would put a naïve
-/// stripper into block-comment mode and eat the rest of the file (including
-/// our `sourcemap: true` assertion target). The team's prior `frontend.rs`
-/// helper had this latent bug; the build_strictness tests exposed it.
-///
-/// This stripper is a small state machine over five states:
-///   - Code           — default; recognises `//`, `/*`, `'`, `"`, `` ` ``
-///   - LineComment    — until `\n` (newline is preserved in output)
-///   - BlockComment   — until matching `*/`
-///   - String         — single, double, or backtick; copies verbatim, honors
-///                      `\` escapes (the next char is copied even if it's a
-///                      quote of the same kind)
-///
-/// Limitations (documented, accepted):
-///   - Regex literals `/.../` are NOT recognised. A `/` followed by `*` or
-///     `/` inside a regex would be misinterpreted. None of the files we
-///     inspect contain regex literals.
-///   - Template-literal interpolations (`${ ... }` inside backticks) are
-///     treated as part of the string — comments inside an interpolation are
-///     NOT stripped. None of the files we inspect use interpolations.
-///   - HTML comments / shebangs / etc. are not handled (irrelevant here).
-///
-/// Mirrors (and supersedes the buggy version of) the helper in `frontend.rs`
-/// — duplicated here because Rust integration test files are independent
-/// compilation units. If/when frontend.rs's helper is hardened, the two
-/// should converge.
-fn strip_comments(src: &str) -> String {
-    enum State {
-        Code,
-        LineComment,
-        BlockComment,
-        // String state: tracks the closing quote char.
-        Str(char),
-    }
-
-    let mut out = String::with_capacity(src.len());
-    let mut state = State::Code;
-    let mut chars = src.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        match state {
-            State::Code => {
-                match c {
-                    '/' => match chars.peek() {
-                        Some('/') => {
-                            chars.next();
-                            state = State::LineComment;
-                        }
-                        Some('*') => {
-                            chars.next();
-                            state = State::BlockComment;
-                        }
-                        _ => out.push(c),
-                    },
-                    '\'' | '"' | '`' => {
-                        out.push(c);
-                        state = State::Str(c);
-                    }
-                    _ => out.push(c),
-                }
-            }
-            State::LineComment => {
-                if c == '\n' {
-                    out.push(c); // preserve newline so line-based logic still works
-                    state = State::Code;
-                }
-                // else: drop the comment char.
-            }
-            State::BlockComment => {
-                if c == '*' {
-                    if let Some(&'/') = chars.peek() {
-                        chars.next();
-                        state = State::Code;
-                    }
-                }
-                // else: drop the comment char.
-            }
-            State::Str(quote) => {
-                out.push(c);
-                if c == '\\' {
-                    // Escape: copy the next char verbatim and DON'T let it
-                    // close the string. This handles `'\''`, `"\""`, etc.
-                    if let Some(esc) = chars.next() {
-                        out.push(esc);
-                    }
-                } else if c == quote {
-                    state = State::Code;
-                }
-            }
-        }
-    }
-
-    out
-}
-
-#[test]
-fn strip_comments_preserves_text_inside_string_literals() {
-    // Regression test for the bug builder hit on slice A: a `/*` sequence
-    // inside a string literal must NOT trip the block-comment state.
-    // This is the exact pattern in vite.config.ts's watch.ignored glob.
-    let src = r#"
-        watch: { ignored: ['**/src-tauri/**'] },
-        build: { sourcemap: true },
-    "#;
-    let stripped = strip_comments(src);
-    assert!(
-        stripped.contains("sourcemap: true"),
-        "strip_comments must not eat content after a /* sequence inside a string literal. Got:\n{}",
-        stripped
-    );
-    assert!(
-        stripped.contains("'**/src-tauri/**'"),
-        "strip_comments must preserve string-literal contents verbatim. Got:\n{}",
-        stripped
-    );
-}
-
-#[test]
-fn strip_comments_still_strips_real_line_and_block_comments() {
-    // Confirm the hardening didn't break the original purpose. A `//` and
-    // a `/* ... */` outside any string literal must still be stripped.
-    let src = r#"
-        // a line comment that mentions sourcemap: false
-        const x = 1;
-        /* a block
-           comment that mentions sourcemap: false */
-        const y = 2;
-    "#;
-    let stripped = strip_comments(src);
-    assert!(
-        !stripped.contains("sourcemap: false"),
-        "strip_comments must still strip both line and block comments. Got:\n{}",
-        stripped
-    );
-    assert!(
-        stripped.contains("const x = 1;") && stripped.contains("const y = 2;"),
-        "strip_comments must preserve real code. Got:\n{}",
-        stripped
-    );
-}
-
-#[test]
-fn strip_comments_honors_backslash_escape_in_strings() {
-    // `'\\''` — an escaped quote inside a single-quoted string — must NOT
-    // close the string early. Otherwise the rest of the line falls into
-    // Code state and a real `// comment` after it would be incorrectly
-    // stripped.
-    let src = r"const s = '\''; // trailing comment with sourcemap: false";
-    let stripped = strip_comments(src);
-    assert!(
-        !stripped.contains("sourcemap: false"),
-        "trailing line-comment after a string with an escaped quote must still be stripped. Got:\n{}",
-        stripped
-    );
-    assert!(
-        stripped.contains(r"'\''"),
-        "string-literal contents (incl. the escape sequence) must be preserved. Got:\n{}",
-        stripped
-    );
-}
+// The hardened, string-literal-aware `strip_comments` helper lives in
+// `tests/common/mod.rs` (Issue #25). The three string-handling self-tests
+// that previously sat here have moved to `tests/strip_comments_self.rs`,
+// physically co-located with the helper they exercise.
 
 // =====================================================================
 // Slice A — vite.config.ts must enable sourcemaps in the production build.
@@ -221,7 +62,7 @@ fn vite_config_enables_build_sourcemap() {
     // the contract by leaving a `// sourcemap: true` ghost while the real
     // config remains absent or `false`.
     let raw = read_repo_file("vite.config.ts");
-    let stripped = strip_comments(&raw);
+    let stripped = common::strip_comments(&raw);
     let normalized: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
 
     let has_true = normalized.contains("sourcemap:true");
@@ -252,7 +93,7 @@ fn vite_config_enables_build_sourcemap() {
 /// them first to avoid coupling the contract to a particular JSON dialect.
 fn load_tsconfig() -> serde_json::Value {
     let raw = read_repo_file("tsconfig.json");
-    let stripped = strip_comments(&raw);
+    let stripped = common::strip_comments(&raw);
     serde_json::from_str(&stripped).unwrap_or_else(|e| {
         panic!(
             "tsconfig.json (after comment-strip) is not valid JSON: {}\n--- stripped ---\n{}",

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
+mod common;
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
@@ -220,57 +222,13 @@ fn frontend_main_ts_uses_hello_h1_default_value() {
     );
 }
 
-/// Strip `//` line comments and `/* ... */` block comments from a TS/JS source string.
-///
-/// This is intentionally a hand-rolled, stdlib-only stripper (no `regex` dep on
-/// `src-tauri/Cargo.toml`). It is purposely conservative — it does NOT try to be a
-/// full TS parser. In particular it ignores the possibility of `//` or `/*` appearing
-/// inside string literals or regexes; that's fine for our use case because the tests
-/// that consume this only assert literal substrings of TS we ourselves write.
-///
-/// The point of stripping comments before doing substring assertions is to defend
-/// against a contributor "preserving" a contractual literal in a comment while
-/// deleting the real call — e.g. leaving `// editable: () => false` after removing
-/// the actual `ctx.update(...)` line. Without stripping, that bypass would silently
-/// pass the read-only test.
-fn strip_ts_comments(src: &str) -> String {
-    let mut out = String::with_capacity(src.len());
-    let mut chars = src.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '/' {
-            match chars.peek() {
-                Some('/') => {
-                    // Line comment — consume up to (but not including) the newline,
-                    // so line breaks are preserved for any downstream line-based logic.
-                    chars.next(); // consume the second '/'
-                    while let Some(&nc) = chars.peek() {
-                        if nc == '\n' {
-                            break;
-                        }
-                        chars.next();
-                    }
-                    continue;
-                }
-                Some('*') => {
-                    // Block comment — consume up to and including the closing `*/`.
-                    chars.next(); // consume the '*'
-                    while let Some(nc) = chars.next() {
-                        if nc == '*' {
-                            if let Some(&'/') = chars.peek() {
-                                chars.next(); // consume the '/'
-                                break;
-                            }
-                        }
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-        }
-        out.push(c);
-    }
-    out
-}
+// The TS/JS comment stripper used by the substring-defense tests below
+// lives in `tests/common/mod.rs` as `common::strip_comments` (Issue #25).
+// The previous local `strip_ts_comments` was a simpler, string-literal-
+// UNAWARE stripper — a latent landmine if `src/main.ts` ever grew a
+// `/*` inside a string literal. The shared helper is a strict superset
+// of that behavior, so call sites were renamed in place and behavior
+// is preserved AND hardened.
 
 #[test]
 fn frontend_main_ts_configures_editor_as_read_only() {
@@ -286,7 +244,7 @@ fn frontend_main_ts_configures_editor_as_read_only() {
     // normalizing, so a comment-only "ghost" of the literal will not satisfy the
     // assertion.
     let main_ts = read_repo_file("src/main.ts");
-    let stripped = strip_ts_comments(&main_ts);
+    let stripped = common::strip_comments(&main_ts);
 
     assert!(
         stripped.contains("editorViewOptionsCtx"),
@@ -347,7 +305,7 @@ fn frontend_main_ts_exposes_bootstrap_named_export_and_gates_auto_mount() {
     // while the real gate is missing — same defense pattern as
     // `frontend_main_ts_configures_editor_as_read_only` above.
     let main_ts = read_repo_file("src/main.ts");
-    let stripped = strip_ts_comments(&main_ts);
+    let stripped = common::strip_comments(&main_ts);
 
     // Named `bootstrap` export. Accept the three forms TypeScript
     // permits: function declaration, async function declaration, and
@@ -409,7 +367,7 @@ fn frontend_main_ts_sets_aria_readonly_on_editor_root() {
     // whitespace stripping, both forms produce the substring
     // `'aria-readonly':'true'` (or its double-quoted equivalent).
     let main_ts = read_repo_file("src/main.ts");
-    let stripped = strip_ts_comments(&main_ts);
+    let stripped = common::strip_comments(&main_ts);
     let normalized: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
 
     let has_single = normalized.contains("'aria-readonly':'true'");
