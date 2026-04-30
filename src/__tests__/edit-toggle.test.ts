@@ -127,3 +127,156 @@ describe('Issue #6 AC #1 — visible read↔edit toggle button', () => {
     ).toBe('false');
   });
 });
+
+// Issue #6 AC #2: Default state on file open is read-only.
+//
+// The two facets of this AC:
+//   (a) `handleFileOpened` (the surface used by both File>Open and the
+//       Tauri `menu-open-file` event listener) must mount the editor in
+//       read-only mode regardless of any prior application state.
+//   (b) Specifically, if the user has toggled into edit mode and THEN
+//       opens a different file, the new file must come up read-only —
+//       not inherit the "edit" mode from the prior session. This is the
+//       cross-state boundary case that "default on file open" pins; it
+//       guards against a regression that leaks `currentEditorMode` across
+//       file boundaries.
+//
+// Both tests pin BOTH `contenteditable="false"` (keyboard-editability) and
+// `aria-readonly="true"` (screen-reader announcement) on the new
+// `.ProseMirror` root, matching the dual-attribute pattern established in
+// `main.test.ts` for AC #3 of issue #18 / #21.
+
+describe('Issue #6 AC #2 — default state on file open is read-only', () => {
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    host.id = 'editor';
+    document.body.appendChild(host);
+    document.title = 'Hashly';
+  });
+
+  it('handleFileOpened mounts the new editor in read-only mode (contenteditable="false", aria-readonly="true")', async () => {
+    const { handleFileOpened } = (await import('../main')) as unknown as {
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+
+    await handleFileOpened(
+      { path: '/tmp/spec.md', name: 'spec.md', content: '# Spec' },
+      host,
+    );
+
+    const pm = host.querySelector<HTMLElement>('.ProseMirror');
+    expect(
+      pm,
+      'precondition: a .ProseMirror root must be present after handleFileOpened',
+    ).not.toBeNull();
+    expect(
+      pm!.getAttribute('contenteditable'),
+      'expected contenteditable="false" on the .ProseMirror root after handleFileOpened (Issue #6 AC #2 — default-on-file-open is read-only).',
+    ).toBe('false');
+    expect(
+      pm!.getAttribute('aria-readonly'),
+      'expected aria-readonly="true" on the .ProseMirror root after handleFileOpened so screen readers announce read-only state (Issue #6 AC #2 + #21 a11y pin).',
+    ).toBe('true');
+  });
+
+  it('after toggling to edit mode and then opening a different file, the new file is read-only (cross-state boundary)', async () => {
+    // The interesting case: the user is mid-edit on file A and opens file
+    // B. File B must come up read-only — the edit mode must NOT leak across
+    // the file boundary. Without this contract, a contributor could ship an
+    // impl that keeps `currentEditorMode = 'edit'` and the user lands inside
+    // an editable view of someone else's file with no explicit handoff.
+    const { bootstrap, handleFileOpened } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+    bootstrap();
+    // Wait long enough for the initial showcase mount to settle.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Step 1: enter edit mode on the initial doc.
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]');
+    expect(toggle, 'precondition: toggle button must exist').not.toBeNull();
+    toggle!.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(
+      host.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'precondition: after the toggle click we must be in edit mode (otherwise this test is not exercising the cross-state case)',
+    ).toBe('true');
+
+    // Step 2: open a different file. The contract: the new file must come
+    // up read-only.
+    await handleFileOpened(
+      { path: '/tmp/other.md', name: 'other.md', content: '# Brand New File' },
+      host,
+    );
+
+    const pmNew = host.querySelector<HTMLElement>('.ProseMirror');
+    expect(
+      pmNew,
+      'expected a .ProseMirror root after the second handleFileOpened (the new file must mount)',
+    ).not.toBeNull();
+    expect(
+      pmNew!.getAttribute('contenteditable'),
+      'expected contenteditable="false" on the freshly-opened file (Issue #6 AC #2 — default-on-file-open must be read-only EVEN WHEN the prior session was in edit mode; the mode must NOT leak across file boundaries).',
+    ).toBe('false');
+    expect(
+      pmNew!.getAttribute('aria-readonly'),
+      'expected aria-readonly="true" on the freshly-opened file (Issue #6 AC #2 — read-only a11y state is part of the on-open contract).',
+    ).toBe('true');
+  });
+
+  it('after the cross-state file open, clicking the toggle correctly enters edit mode (the toggle is rebound to the new editor)', async () => {
+    // Subtle but important: when handleFileOpened destroys the prior editor
+    // and mounts a new one, the toggle button's click handler MUST end up
+    // pointing at the new editor — otherwise a click no-ops or, worse,
+    // tries to dispatch on a destroyed editor and throws. We pin this by
+    // entering edit mode on file A, opening file B (now read-only — see
+    // the test above), then clicking the toggle and asserting file B
+    // becomes editable. This catches the "toggle holds a stale editor
+    // reference" regression class.
+    const { bootstrap, handleFileOpened } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+
+    // Enter edit on file A.
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    // Open file B (resets to read mode per the test above).
+    await handleFileOpened(
+      { path: '/tmp/B.md', name: 'B.md', content: '# B' },
+      host,
+    );
+    expect(
+      host.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'precondition: file B must be read-only after open',
+    ).toBe('false');
+
+    // Click toggle on file B — must enter edit mode for file B's editor.
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(
+      host.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'expected file B to enter edit mode after the toggle click — i.e. the toggle is rebound to the new editor instance after handleFileOpened, not still wired to the destroyed prior editor (Issue #6 AC #2 cross-state correctness).',
+    ).toBe('true');
+  });
+});
