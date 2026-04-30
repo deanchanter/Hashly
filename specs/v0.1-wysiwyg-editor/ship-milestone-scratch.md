@@ -85,3 +85,15 @@ Critical fixed: 0
 Non-critical filed: 0
 Process note: qa-tdd wrote tests but never messaged builder; team-lead pinged builder directly with the implementation details. Both agents went idle without committing; team-lead committed.
 Reviewer status: team-lead substituted. Considered: empty-heading edge case (`# ` → id=""); accepted (matches default Milkdown behavior, not introduced by this fix).
+
+### #16 — Window-level dragover/drop guard
+
+Commits:
+- `2f86194 feat(#16): install window-level dragover/drop preventDefault guard`
+
+Tests: npm 10→14 (+4: export shape, dragover preventDefault, drop preventDefault, idempotency); cargo frontend 15→16 (+1 static contract). All green.
+
+Critical fixed: 0
+Non-critical filed: 0
+Process note: qa-tdd wrote both dynamic AND static contract tests but went idle without committing. builder applied the edit but went idle without committing. team-lead committed all three files in one atomic commit. Tmux orphans cleaned at iteration boundary.
+Reviewer status: team-lead substituted. Reviewed: idempotency flag is module-level (good for single-page lifetime, fine since vite HMR will reload the whole module anyway). preventDefault on `drop` even though the user said "before any per-element drop logic" — confirmed: window-level handlers run during the bubbling phase, and ProseMirror's drop handlers (when editable) attach to view DOM, so they don't compete here.
