@@ -1,5 +1,7 @@
 # Tasks: Hashly v0.1 — WYSIWYG Markdown Reader
 
+**Partially shipped on 2026-04-29** — only slice 13 (#18, Frontend test harness) shipped via the milestone PR. All other slices remain open for a follow-up run.
+
 Source: [spec.md](./spec.md)
 
 1. [Tauri window opens with hello-world HTML](https://github.com/deanchanter/Hashly/issues/1) — A developer can launch a Hashly window via `cargo tauri dev`.
@@ -166,14 +168,14 @@ Source: [spec.md](./spec.md)
 **User value:** Maintainers can lock down frontend behavior with fast unit tests, catching regressions in the Milkdown wiring (read-only mode, fixture rendering, edit toggle) before they hit a manual host smoke.
 
 **Acceptance criteria:**
-- [ ] Vitest + jsdom (or happy-dom) added as devDependencies; `vitest.config.ts` configured.
-- [ ] `npm test` runs Vitest and exits 0 on a green suite.
-- [ ] At least one meaningful passing test against existing frontend behavior (e.g. `mountEditor` produces a read-only Milkdown instance, `aria-readonly="true"` on the editor root).
-- [ ] Test files colocated under `src/` (e.g. `src/main.test.ts`) or `src/__tests__/` — pick one and document.
-- [ ] README documents `npm test` alongside the existing `cargo test` line.
-- [ ] CI (or local `cargo test` orchestration) is updated so frontend tests run as part of the standard verification flow, or a follow-up issue is filed if CI doesn't exist yet.
+- [x] Vitest + jsdom added as devDependencies; `vitest.config.ts` configured.
+- [x] `npm test` runs Vitest and exits 0 on a green suite.
+- [x] At least one meaningful passing test against existing frontend behavior — `mountEditor` produces a read-only Milkdown instance with `aria-readonly="true"` on the editor root, renders `# Hello` as an `<h1>`, and configures `contenteditable="false"`.
+- [x] Test files colocated under `src/__tests__/` — convention documented in README.
+- [x] README documents `npm test` alongside the existing `cargo test` line.
+- [x] CI follow-up filed as #20 (no GitHub Actions workflow exists yet — wiring deferred to that issue).
 
-**Notes:** Depends on #2. Today the frontend is only verified via Rust integration tests (`src-tauri/tests/`) + manual `cargo tauri dev` smoke. A Vitest layer lets future tasks (#3 fixture rendering, #6 edit toggle, #7 dirty/save round-trip) ship with TS-level coverage instead of leaning entirely on manual checks. Pick `jsdom` if Milkdown's ProseMirror needs full DOM APIs; `happy-dom` is faster but has gaps — verify before committing.
+**Notes:** Depends on #2. Today the frontend is only verified via Rust integration tests (`src-tauri/tests/`) + manual `cargo tauri dev` smoke. A Vitest layer lets future tasks (#3 fixture rendering, #6 edit toggle, #7 dirty/save round-trip) ship with TS-level coverage instead of leaning entirely on manual checks. Pick `jsdom` if Milkdown's ProseMirror needs full DOM APIs; `happy-dom` is faster but has gaps — verify before committing. **Shipped 2026-04-29 with `jsdom`; verify pass surfaced 3 follow-ups (#20 CI, #21 stronger ARIA assertions, #22 auto-mount guard) — see "Follow-ups from #18 verify pass" at the bottom.**
 
 ---
 
@@ -187,3 +189,11 @@ Filed as separate GitHub issues (numbers assigned at `gh issue create` time — 
 - **README: document `cargo tauri dev` failure modes (port 1420 busy, missing `node_modules`)** — DX.
 - **ProseMirror dragover bypass surfaces if Tauri `dragDropEnabled` is flipped** — **blocks #4** if it uses HTML5 drag-drop.
 - **Heading id collisions: commonmark slugger emits duplicates** — **blocks #3**.
+
+## Follow-ups from #18 verify pass
+
+Filed during the 2026-04-29 ship-milestone run. All carry the `v0.1-wysiwyg-editor` label so a future run picks them up.
+
+- **#20: CI: run npm test alongside cargo test in GitHub Actions** — no CI workflow exists yet.
+- **#21: Strengthen #18 mountEditor test assertions: pin to ProseMirror root + assert role** — current ARIA assertions match any descendant; future Milkdown upgrade could regress silently.
+- **#22: Guard `src/main.ts` auto-mount against test-time side effects + warn on missing `#editor`** — current auto-mount is silent on missing host and could race future Vitest tests that pre-seed `#editor`.

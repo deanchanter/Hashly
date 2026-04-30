@@ -1,6 +1,6 @@
 # Hashly v0.1 — WYSIWYG Markdown Reader
 
-**Status:** Draft
+**Status:** Partially shipped (2026-04-29 — slice #18 only; remaining slices deferred to a follow-up milestone PR)
 **Author:** deanchanter
 **Date:** 2026-04-28
 
