@@ -87,33 +87,43 @@ export function getCurrentEditor(): Editor | null {
   return currentEditor;
 }
 
+let toggleInFlight = false;
+
 async function toggleEditMode(): Promise<void> {
+  if (toggleInFlight) return;
   const editor = currentEditor;
   const host = currentEditorHost;
   if (!editor || !host) return;
-  let md: string;
+  toggleInFlight = true;
+  if (editToggleButton) editToggleButton.disabled = true;
   try {
-    md = editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      const serializer = ctx.get(serializerCtx);
-      return serializer(view.state.doc);
-    });
-  } catch {
-    return;
+    let md: string;
+    try {
+      md = editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const serializer = ctx.get(serializerCtx);
+        return serializer(view.state.doc);
+      });
+    } catch {
+      return;
+    }
+    const nextMode: EditorMode = currentEditorMode === 'read' ? 'edit' : 'read';
+    try {
+      await editor.destroy();
+    } catch {
+      /* swallow — destroy may reject if the editor was already torn down */
+    }
+    currentEditor = null;
+    host.innerHTML = '';
+    const next = await mountEditor(host, md, nextMode);
+    currentEditor = next;
+    currentEditorMode = nextMode;
+    currentEditorHost = host;
+    syncEditToggleUi();
+  } finally {
+    toggleInFlight = false;
+    if (editToggleButton) editToggleButton.disabled = false;
   }
-  const nextMode: EditorMode = currentEditorMode === 'read' ? 'edit' : 'read';
-  try {
-    await editor.destroy();
-  } catch {
-    /* swallow — destroy may reject if the editor was already torn down */
-  }
-  currentEditor = null;
-  host.innerHTML = '';
-  const next = await mountEditor(host, md, nextMode);
-  currentEditor = next;
-  currentEditorMode = nextMode;
-  currentEditorHost = host;
-  syncEditToggleUi();
 }
 
 let editToggleInstalled = false;
@@ -142,6 +152,7 @@ function installEditToggle(): void {
   button.setAttribute('aria-pressed', 'false');
   button.className = 'hashly-edit-toggle';
   button.textContent = EDIT_TOGGLE_LABEL_READ;
+  button.disabled = true;
   button.addEventListener('click', () => {
     void toggleEditMode();
   });
@@ -157,6 +168,7 @@ export async function handleFileOpened(payload: FileOpened, host: HTMLElement): 
   currentEditorMode = 'read';
   currentEditorHost = host;
   syncEditToggleUi();
+  if (editToggleButton) editToggleButton.disabled = false;
 }
 
 export async function openFileViaDialog(host: HTMLElement): Promise<void> {
@@ -211,6 +223,7 @@ export function bootstrap(): void {
     currentEditor = editor;
     currentEditorMode = 'read';
     currentEditorHost = host;
+    if (editToggleButton) editToggleButton.disabled = false;
   });
 }
 
