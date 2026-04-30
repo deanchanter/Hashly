@@ -20,18 +20,27 @@ describe('mountEditor', () => {
     document.body.appendChild(host);
   });
 
-  it('mounts a Milkdown instance and marks the editor root aria-readonly="true"', async () => {
+  it('mounts a Milkdown instance and marks the .ProseMirror root aria-readonly="true" with role="textbox"', async () => {
     await mountEditor(host, '# Hello');
 
-    // The editor root is the ProseMirror node Milkdown creates inside `host`.
-    // Milkdown sets aria-readonly via editorViewOptionsCtx → EditorProps.attributes
-    // (see src/main.ts). The selector deliberately scopes to within `host` so
-    // this test does not collide with any other DOM.
-    const readOnlyRoot = host.querySelector<HTMLElement>('[aria-readonly="true"]');
+    // Issue #21: pin the assertion to the ProseMirror node specifically (not just
+    // any descendant with the attribute), and assert the role too. Background:
+    // aria-readonly is only honored by assistive tech when the element has a
+    // role that supports it (textbox/grid/listbox). Milkdown's core sets
+    // `role="textbox"` on the editor's content DOM at @milkdown/core/lib/index.js:452.
+    // If a future Milkdown release moves aria-readonly to a wrapper or drops the
+    // role, screen-reader announcement breaks but a `[aria-readonly]`-only
+    // selector would still pass — pinning both class and role catches that
+    // regression as a real test failure.
+    const readOnlyRoot = host.querySelector<HTMLElement>('.ProseMirror[aria-readonly="true"]');
     expect(
       readOnlyRoot,
-      'expected an element with aria-readonly="true" inside the mount host (read-only Milkdown root)',
+      'expected the .ProseMirror root to have aria-readonly="true" (read-only Milkdown root). Milkdown emits the ProseMirror class on its content DOM; if a future upgrade moves aria-readonly elsewhere, fix the contract here.',
     ).not.toBeNull();
+    expect(
+      readOnlyRoot?.getAttribute('role'),
+      'expected Milkdown\'s core to set role="textbox" on the ProseMirror root (required for aria-readonly to be honored by assistive tech). Pinned by issue #21.',
+    ).toBe('textbox');
   });
 
   it('renders the supplied markdown — `# Hello` becomes an <h1> with text "Hello"', async () => {
