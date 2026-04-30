@@ -351,6 +351,70 @@ fn frontend_main_ts_exposes_bootstrap_named_export_and_gates_auto_mount() {
 }
 
 #[test]
+fn frontend_style_css_sets_cursor_default_on_prosemirror_root() {
+    // Issue #15 AC #1: the read-only editor must show the arrow cursor on hover,
+    // not the I-beam (text caret) the WebView falls back to for a content area.
+    // We pin a CSS rule scoped to `.ProseMirror` (the ProseMirror content DOM)
+    // or `#editor` (the Milkdown mount host) whose body sets `cursor: default`.
+    //
+    // Defense-in-depth (matching the pattern of the aria-readonly contract test
+    // above): comments are stripped first so a commented-out ghost rule like
+    //   /* .ProseMirror { cursor: default; } */
+    // does NOT satisfy the assertion. CSS only has `/* ... */` block comments
+    // (no `//` line comments per spec — most preprocessors strip those before
+    // emit), but the shared `common::strip_comments` helper handles both
+    // styles safely so it is the right tool here.
+    //
+    // We then walk the stripped CSS as a sequence of `selector { body }` rules.
+    // For each rule, we normalize whitespace in BOTH the selector and the body,
+    // then assert that at least one rule has a selector mentioning
+    // `.ProseMirror` or `#editor` AND a body containing `cursor:default`. This
+    // is a structural check — a stray `cursor: default` somewhere ELSE in the
+    // file (say, a `body { cursor: default; }` rule) won't satisfy the
+    // contract; the rule must actually be scoped to the editor root.
+    let css = read_repo_file("src/style.css");
+    let stripped = common::strip_comments(&css);
+
+    let chars: Vec<char> = stripped.chars().collect();
+    let mut i = 0usize;
+    let mut block_start = 0usize;
+    let mut found = false;
+    while i < chars.len() {
+        if chars[i] == '{' {
+            let selector: String = chars[block_start..i].iter().collect();
+            // Find matching '}'. We don't use nested at-rules in this file,
+            // so a flat scan is sufficient.
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] != '}' {
+                j += 1;
+            }
+            let body: String = if j < chars.len() {
+                chars[i + 1..j].iter().collect()
+            } else {
+                chars[i + 1..].iter().collect()
+            };
+            let sel_norm: String = selector.chars().filter(|c| !c.is_whitespace()).collect();
+            let body_norm: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+            let sel_matches = sel_norm.contains(".ProseMirror") || sel_norm.contains("#editor");
+            if sel_matches && body_norm.contains("cursor:default") {
+                found = true;
+                break;
+            }
+            i = j + 1;
+            block_start = i;
+        } else {
+            i += 1;
+        }
+    }
+
+    assert!(
+        found,
+        "expected src/style.css to contain a rule scoped to `.ProseMirror` or `#editor` whose body sets `cursor: default` (Issue #15 AC #1) so hovering the read-only editor shows the arrow cursor, not the I-beam. After comment-strip, src/style.css was:\n{}",
+        stripped
+    );
+}
+
+#[test]
 fn frontend_main_ts_sets_aria_readonly_on_editor_root() {
     // P1 #3 from the verify pass on Issue #2:
     // Milkdown sets `role="textbox"` on the ProseMirror root unconditionally.
