@@ -115,3 +115,19 @@ Critical fixed: 0
 Non-critical filed: 0
 Process note: qa-tdd actually drove the loop this iteration — sent SendMessage to builder, waited for response. builder added all the impl (gfm preset, fixture file, bootstrap wiring). Both still went idle without committing; team-lead committed and added the GFM table smoke test (qa-tdd hadn't covered table rendering dynamically — only static contract).
 Reviewer status: team-lead substituted.
+
+### #11 — Best-effort render for malformed markdown
+
+Commits:
+- `61d79cf feat(#11): bundle malformed-markdown fixture + best-effort mount contract`
+
+Fixture: `src/fixtures/malformed-showcase.md` (~50 lines) covering unclosed fence, broken table, raw HTML (escaped via #14 contract), 10-level nested list, unmatched **bold and *italic, malformed link, mixed Unicode/RTL/ZWJ.
+
+No parser changes — Milkdown's commonmark + gfm presets already handle malformed input best-effort. Issue was verification + contract pinning.
+
+Tests: cargo frontend 17→18 (+1: malformed fixture file existence + pathology tokens); npm 15→16 (+1: dynamic mount-without-crash + no console.error).
+
+Critical fixed: 0
+Non-critical filed: 0
+Process note: qa-tdd added static contract test only; team-lead added the dynamic Vitest smoke test for AC #2/#3 (mount-without-throw + no console.error). Builder created the fixture. Both agents idled without committing.
+Reviewer status: team-lead substituted.
