@@ -1116,3 +1116,98 @@ describe('Issue #6 fix-loop C5 — focus restoration after toggle', () => {
     ).toBe(toggle);
   });
 });
+
+// C6 — handleFileOpened destroys the prior editor.
+//
+// Background: the existing handleFileOpened wipes host.innerHTML and
+// awaits a fresh mountEditor, which detaches the prior editor's DOM but
+// does NOT call .destroy() on the prior `currentEditor`. Milkdown
+// Editors hold ProseMirror plugin state, event listeners (input rules,
+// keymap, paste handlers), and timers; orphaning them leaks memory AND
+// keeps stale listeners alive that could fire on a future event and
+// dispatch on a destroyed view (causing exceptions in the WebView
+// console).
+//
+// Pinned contract:
+//   1. handleFileOpened invokes .destroy() on the prior editor before
+//      reassigning `currentEditor` to the new instance.
+//   2. After handleFileOpened, getCurrentEditor() returns a strictly
+//      different Editor instance (E1 !== E2).
+
+describe('Issue #6 fix-loop C6 — handleFileOpened destroys the prior editor', () => {
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    host.id = 'editor';
+    document.body.appendChild(host);
+    document.title = 'Hashly';
+  });
+
+  it('handleFileOpened invokes .destroy() on the prior editor before mounting the new one', async () => {
+    const { bootstrap, handleFileOpened, getCurrentEditor } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+      getCurrentEditor: () => Editor | null;
+    };
+
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const E1 = getCurrentEditor();
+    expect(
+      E1,
+      'precondition: bootstrap must mount an initial editor before this test can capture E1',
+    ).not.toBeNull();
+
+    // Spy on E1's .destroy() BEFORE the second open so we can assert
+    // handleFileOpened invokes it. We use vi.spyOn rather than wrapping
+    // in user-code so the original behavior is preserved (the test is
+    // about whether destroy was called, not about replacing it).
+    const destroySpy = vi.spyOn(E1!, 'destroy');
+
+    await handleFileOpened(
+      { path: '/tmp/x.md', name: 'x.md', content: '# X' },
+      host,
+    );
+
+    expect(
+      destroySpy,
+      'expected handleFileOpened to invoke .destroy() on the prior editor (E1) before mounting the new one — without this, ProseMirror plugin state, event listeners, and timers leak from the prior editor; stale listeners can fire later and dispatch on a destroyed view. Issue #6 fix-loop C6.',
+    ).toHaveBeenCalled();
+  });
+
+  it('after handleFileOpened, getCurrentEditor returns a different Editor instance (E1 !== E2)', async () => {
+    const { bootstrap, handleFileOpened, getCurrentEditor } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+      getCurrentEditor: () => Editor | null;
+    };
+
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const E1 = getCurrentEditor();
+    expect(E1, 'precondition: E1 must be non-null').not.toBeNull();
+
+    await handleFileOpened(
+      { path: '/tmp/x.md', name: 'x.md', content: '# X' },
+      host,
+    );
+
+    const E2 = getCurrentEditor();
+    expect(E2, 'expected a non-null editor after handleFileOpened').not.toBeNull();
+    expect(
+      E1,
+      'expected E1 !== E2 after handleFileOpened (the file-open path must replace, not retain, the editor instance — Issue #6 fix-loop C6).',
+    ).not.toBe(E2);
+  });
+});
