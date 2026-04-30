@@ -325,6 +325,74 @@ fn frontend_main_ts_imports_prosemirror_baseline_css() {
 }
 
 #[test]
+fn frontend_main_ts_exposes_bootstrap_named_export_and_gates_auto_mount() {
+    // Issue #22 — Guard src/main.ts auto-mount against test-time side
+    // effects. Pins the static-contract half of the issue:
+    //
+    //   - AC #2: a named `bootstrap` export must exist (so tests and
+    //     non-entry callers can drive the mount path explicitly), AND
+    //     the module-top-level auto-call must be gated on a `MODE !==
+    //     'test'` (or analogous) check so importing `../main` under
+    //     Vitest is a no-op.
+    //
+    //   - AC #1: the missing-host warn string is part of the public
+    //     contract (downstream log filters / dashboards key on it).
+    //     We pin the verbatim string here in addition to the dynamic
+    //     vitest assertion in `src/__tests__/bootstrap.test.ts` so the
+    //     CI cargo job catches a copy-edit drift even if vitest is
+    //     skipped (e.g. the npm job is broken / disabled).
+    //
+    // Comments are stripped before matching so a contributor cannot
+    // satisfy the contract by leaving a `// import.meta.env.MODE` ghost
+    // while the real gate is missing — same defense pattern as
+    // `frontend_main_ts_configures_editor_as_read_only` above.
+    let main_ts = read_repo_file("src/main.ts");
+    let stripped = strip_ts_comments(&main_ts);
+
+    // Named `bootstrap` export. Accept the three forms TypeScript
+    // permits: function declaration, async function declaration, and
+    // const-assigned function expression / arrow.
+    let has_function_export = stripped.contains("export function bootstrap")
+        || stripped.contains("export async function bootstrap")
+        || stripped.contains("export const bootstrap");
+    assert!(
+        has_function_export,
+        "expected src/main.ts to expose a named `bootstrap` export — \
+         `export function bootstrap`, `export async function bootstrap`, \
+         or `export const bootstrap` (Issue #22 AC #2/#3). After comment-strip:\n{}",
+        stripped
+    );
+
+    // Gate expression on the auto-call. The recommended gate is
+    // `import.meta.env.MODE !== 'test'`; we accept either quote style
+    // for the string literal but require the operator and operand
+    // pairing to be exactly that (so a contributor doesn't accidentally
+    // weaken it to `=== 'production'`, which would also disable the
+    // dev-server auto-mount we explicitly want to keep).
+    let normalized: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
+    let has_single_quoted = normalized.contains("import.meta.env.MODE!=='test'");
+    let has_double_quoted = normalized.contains("import.meta.env.MODE!==\"test\"");
+    assert!(
+        has_single_quoted || has_double_quoted,
+        "expected src/main.ts to gate the auto-mount on `import.meta.env.MODE !== 'test'` \
+         (Issue #22 AC #2) — this is the only gate that lets dev AND production \
+         auto-mount while suppressing it under Vitest. After comment-strip:\n{}",
+        stripped
+    );
+
+    // Verbatim warn-string pinning (also exercised dynamically in
+    // src/__tests__/bootstrap.test.ts). Pinned in stripped source so a
+    // commented-out copy of the literal does not satisfy this.
+    assert!(
+        stripped.contains("[hashly] #editor host element not found; mountEditor not auto-invoked"),
+        "expected src/main.ts to log the contracted warn string \
+         `[hashly] #editor host element not found; mountEditor not auto-invoked` \
+         when the #editor host is missing (Issue #22 AC #1). After comment-strip:\n{}",
+        stripped
+    );
+}
+
+#[test]
 fn frontend_main_ts_sets_aria_readonly_on_editor_root() {
     // P1 #3 from the verify pass on Issue #2:
     // Milkdown sets `role="textbox"` on the ProseMirror root unconditionally.
