@@ -66,6 +66,38 @@ describe('mountEditor', () => {
     expect(peditable?.getAttribute('contenteditable')).toBe('false');
   });
 
+  it('assigns unique heading ids in standard <slug> / <slug>-<n> format on duplicate headings (#17)', async () => {
+    // Issue #17 — Heading id collisions. Milkdown's @milkdown/preset-commonmark
+    // ships `headingIdGenerator` whose default produces `text.toLowerCase().trim().replace(/\s+/g, '-')`.
+    // A separate `syncHeadingIdPlugin` step disambiguates duplicates — but in a
+    // NON-STANDARD `-#2`/`-#3` format (note the leading hash). Readers writing
+    // in-doc anchor links use the GitHub-flavored / remark-slug convention
+    // (`hello`, `hello-1`, `hello-2`), so links like `[name](#hello-1)` will
+    // 404 silently against the default Milkdown output.
+    //
+    // This test pins the contract: 4 H1s, all unique IDs, and the `hello-`
+    // family is exactly `["hello", "hello-1", "hello-2"]` (sorted) — that is,
+    // standard slug-counter format with `n` starting at 1, monotonically
+    // increasing, NO leading `#` in the suffix.
+    const md = '# Hello\n\n# Hello\n\n# World\n\n# Hello';
+    await mountEditor(host, md);
+
+    const headings = Array.from(host.querySelectorAll<HTMLHeadingElement>('h1'));
+    expect(headings.length, 'expected 4 <h1>').toBe(4);
+
+    const ids = headings.map((h) => h.getAttribute('id'));
+    expect(
+      new Set(ids).size,
+      `expected 4 unique ids, got: ${JSON.stringify(ids)}`,
+    ).toBe(4);
+
+    const helloIds = ids.filter((id) => id?.startsWith('hello')).sort();
+    expect(
+      helloIds,
+      `expected ["hello", "hello-1", "hello-2"] (Issue #17 standard slug-counter format), got: ${JSON.stringify(helloIds)}`,
+    ).toEqual(['hello', 'hello-1', 'hello-2']);
+  });
+
   it('exposes the .ProseMirror root as a tab stop (tabindex="0") so keyboard users can scroll the read-only doc', async () => {
     // Issue #15 AC #2: `contenteditable="false"` removes the implicit tab-stop
     // that ProseMirror would otherwise inherit from `contenteditable="true"`.

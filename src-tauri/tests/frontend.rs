@@ -445,6 +445,46 @@ fn frontend_main_ts_sets_aria_readonly_on_editor_root() {
 }
 
 #[test]
+fn frontend_main_ts_overrides_heading_id_generator_for_collision_suffix() {
+    // Issue #17 — Heading id collisions. Milkdown's `@milkdown/preset-commonmark`
+    // disambiguates duplicate heading text via `syncHeadingIdPlugin` using a
+    // NON-STANDARD `-#2`/`-#3` suffix format. Readers expect the GitHub /
+    // remark-slug convention (`hello`, `hello-1`, `hello-2`) so in-doc anchor
+    // links like `[name](#hello-1)` resolve. The fix is to override
+    // `ctx.set(headingIdGenerator.key, customGenerator)` inside
+    // `mountEditor`'s config block, where `customGenerator` is a closure that
+    // tracks a base-slug → next-counter map.
+    //
+    // This static-contract test pins the wiring so a future refactor can't
+    // silently drop the override and regress to Milkdown's default output.
+    // The dynamic vitest test in src/__tests__/main.test.ts asserts the
+    // rendered DOM; this catches a contributor who deletes the override even
+    // when vitest is unavailable in CI.
+    //
+    // Comments are stripped first (matching the aria-readonly defense
+    // pattern above) so a commented-out `ctx.set(headingIdGenerator.key, ...)`
+    // ghost cannot satisfy the assertion.
+    let main_ts = read_repo_file("src/main.ts");
+    let stripped = common::strip_comments(&main_ts);
+
+    assert!(
+        stripped.contains("headingIdGenerator"),
+        "expected src/main.ts to import / reference `headingIdGenerator` from `@milkdown/preset-commonmark` (Issue #17). After comment-strip:\n{}",
+        stripped
+    );
+
+    // Whitespace-insensitive check that the override-call is real (not just
+    // an unused import). Accept either `ctx.set(headingIdGenerator.key,` or
+    // the same call with arbitrary spacing around the parens / dot.
+    let normalized: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        normalized.contains("ctx.set(headingIdGenerator.key,"),
+        "expected src/main.ts to call `ctx.set(headingIdGenerator.key, ...)` inside the editor's config block to install a custom slug-counter generator (Issue #17 AC #2). After comment-strip:\n{}",
+        stripped
+    );
+}
+
+#[test]
 fn frontend_main_ts_sets_tabindex_0_on_editor_root() {
     // Issue #15 AC #2: `contenteditable="false"` strips the implicit tab-stop
     // that ProseMirror would otherwise have. Without `tabindex="0"` on the
