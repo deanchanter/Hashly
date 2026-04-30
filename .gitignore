@@ -3,3 +3,4 @@ target/
 src-tauri/gen/
 node_modules/
 dist/
+.claude/.ship-milestone.*.scratch.md
