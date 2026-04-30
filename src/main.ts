@@ -172,6 +172,13 @@ function installEditToggle(): void {
 }
 
 export async function handleFileOpened(payload: FileOpened, host: HTMLElement): Promise<void> {
+  if (currentEditor) {
+    try {
+      await currentEditor.destroy();
+    } catch {
+      /* swallow — destroy may reject if the editor was already torn down */
+    }
+  }
   host.innerHTML = '';
   document.title = `${payload.name} — Hashly`;
   const editor = await mountEditor(host, payload.content);
