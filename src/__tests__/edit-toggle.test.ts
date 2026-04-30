@@ -66,10 +66,10 @@ describe('Issue #6 AC #1 — visible read↔edit toggle button', () => {
       toggle!.tagName,
       'expected the toggle to be a <button> so click + Enter/Space activation work natively (Issue #6 AC #1).',
     ).toBe('BUTTON');
-    expect(
-      toggle!.hasAttribute('disabled'),
-      'expected the toggle to NOT be disabled by default — without an enabled toggle, the user has no path into edit mode (Issue #6 AC #1).',
-    ).toBe(false);
+    // Note: the disabled-state contract is pinned by the C4 fix-loop tests
+    // below — disabled BEFORE mount completes, enabled AFTER. Pinning a
+    // bare "not disabled" here would encode an anti-pattern (the toggle
+    // would still appear ready before there's an editor to act on).
   });
 
   it('clicking the toggle flips the .ProseMirror root from contenteditable="false" to "true"', async () => {
@@ -874,5 +874,175 @@ describe('Issue #6 fix-loop C3 — cursor is `text` in edit mode (CSS contract)'
       sel.includes('.ProseMirror') && sel.includes('contenteditable'),
       `expected the edit-mode cursor selector to be a compound of .ProseMirror AND [contenteditable=...] for higher specificity than the read-mode rule (Issue #6 fix-loop C3 — without this, source ordering decides which rule wins). Got selector: ${sel}`,
     ).toBe(true);
+  });
+});
+
+// C4 — Toggle disabled when no editor mounted.
+//
+// `installEditToggle` runs synchronously from `bootstrap()`, but the
+// editor it acts on mounts asynchronously (via `void mountEditor(...)`).
+// During that gap — and during any in-flight toggle re-mount — the
+// button must be `disabled` so a click can't dispatch on a null /
+// destroyed editor reference. The contract pinned here:
+//   1. IMMEDIATELY after bootstrap (before mount resolves), button is
+//      disabled.
+//   2. AFTER the mount resolves, button is enabled.
+//   3. SYNCHRONOUSLY after a click that starts a toggle, the button is
+//      disabled again (the destroy+re-mount is in flight).
+//   4. AFTER the in-flight toggle completes, the button is re-enabled.
+//
+// This test REPLACES the prior "NOT disabled by default" assertion that
+// was in the AC #1 describe (it encoded the anti-pattern of "always
+// enabled regardless of state").
+
+describe('Issue #6 fix-loop C4 — toggle disabled when no editor mounted', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '<div id="editor"></div>';
+    document.title = 'Hashly';
+  });
+
+  it('button is disabled IMMEDIATELY after bootstrap (before mount completes), then enabled after mount', async () => {
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    // No wait — the mount promise is in flight; getCurrentEditor() is null.
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]');
+    expect(
+      toggle,
+      'precondition: toggle must be installed synchronously by bootstrap (the install must NOT wait for the editor)',
+    ).not.toBeNull();
+    expect(
+      toggle!.disabled,
+      'expected button.disabled === true immediately after bootstrap (before mount resolves) — clicking the toggle when no editor is mounted would no-op or dispatch on a null editor reference. Issue #6 fix-loop C4.',
+    ).toBe(true);
+
+    // Wait for the mount to complete.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(
+      toggle!.disabled,
+      'expected button.disabled === false after mount completes — the toggle is now actionable. Issue #6 fix-loop C4.',
+    ).toBe(false);
+  });
+
+  it('button is disabled DURING an in-flight toggle and re-enabled after completion (C4 + C7 interaction)', async () => {
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    expect(
+      toggle.disabled,
+      'precondition: toggle must be enabled after the initial mount completes',
+    ).toBe(false);
+
+    toggle.click();
+    // Synchronous post-click inspection: the toggle is now in-flight
+    // (destroy + re-mount). Without the C4 disabled-during-flight guard,
+    // a second click here would race with the first.
+    expect(
+      toggle.disabled,
+      'expected button.disabled === true SYNCHRONOUSLY after the click — the destroy+re-mount cycle is in flight; the button must be inert until it resolves. Issue #6 fix-loop C4 + C7.',
+    ).toBe(true);
+
+    // Wait for the toggle to complete.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(
+      toggle.disabled,
+      'expected button.disabled === false after the toggle completes — the button must be re-enabled to accept the next click (otherwise we end up permanently locked out of the toggle). Issue #6 fix-loop C4.',
+    ).toBe(false);
+  });
+});
+
+// C7 — Race / re-entrancy guard on toggle.
+//
+// Two synchronous `.click()` calls on the toggle dispatch sequentially in
+// the same event loop tick. Without a re-entrancy guard, both invoke
+// `toggleEditMode` concurrently and the destroy+re-mount cycles race —
+// the result is non-deterministic (sometimes 0, sometimes 2 .ProseMirror
+// nodes; sometimes mode flips twice, sometimes not at all). The contract:
+//   1. After two synchronous clicks, exactly ONE .ProseMirror is in the
+//      DOM (no stacking).
+//   2. The state reflects exactly ONE flip — the first click "wins"; the
+//      second is dropped by the guard.
+//   3. After the in-flight resolves, a fresh click works normally — the
+//      guard must release, not get stuck.
+//
+// Implementation-agnostic: the C4 disabled-during-flight pattern naturally
+// satisfies this (jsdom matches the browser spec — disabled buttons don't
+// fire click events), but a non-disabled inFlight flag also works. We test
+// the observable outcome, not the mechanism.
+
+describe('Issue #6 fix-loop C7 — race / re-entrancy guard on toggle', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '<div id="editor"></div>';
+    document.title = 'Hashly';
+  });
+
+  it('two synchronous clicks: editor mounts exactly once and state reflects only the first click', async () => {
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const editor = document.getElementById('editor')!;
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+
+    // Two synchronous clicks. Without a guard, both dispatch concurrent
+    // toggleEditMode promises that race for the host's innerHTML.
+    toggle.click();
+    toggle.click();
+
+    // Long enough for either click's destroy+re-mount cycle to settle.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const prosemirrors = editor.querySelectorAll('.ProseMirror');
+    expect(
+      prosemirrors.length,
+      `expected exactly ONE .ProseMirror inside #editor after two synchronous clicks — the second click must be dropped by the re-entrancy guard, not race with the first to stack a second mount. Got ${prosemirrors.length} .ProseMirror nodes. Issue #6 fix-loop C7.`,
+    ).toBe(1);
+
+    expect(
+      prosemirrors[0]!.getAttribute('contenteditable'),
+      'expected contenteditable="true" — only the first click took effect (read → edit). The second click was DROPPED by the guard, NOT processed and immediately reverted to read (which would be a different deterministic-but-wrong outcome). Issue #6 fix-loop C7.',
+    ).toBe('true');
+  });
+
+  it('after the in-flight resolves, a fresh click works normally (guard releases — does not get stuck)', async () => {
+    // Pins the OTHER half of the C7 contract: the guard mustn't be a
+    // permanent lockout. After the first click's toggle completes, the
+    // guard releases and the next click is processed normally.
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const editor = document.getElementById('editor')!;
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+
+    toggle.click();
+    toggle.click(); // dropped by guard
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(
+      editor.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'precondition: after the first round (with race), we must be in edit mode (otherwise this test is not exercising the post-release case)',
+    ).toBe('true');
+
+    // Fresh click after the in-flight resolves. The guard must release.
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(
+      editor.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'expected the post-resolution click to flip back to read mode — the re-entrancy guard must release after the in-flight toggle completes (otherwise the toggle is permanently locked out after a single race). Issue #6 fix-loop C7.',
+    ).toBe('false');
   });
 });
