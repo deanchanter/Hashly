@@ -70,8 +70,31 @@ export async function openFileViaDialog(host: HTMLElement): Promise<void> {
     filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
   });
   if (!selected || Array.isArray(selected)) return;
-  const payload = await invoke<FileOpened>('read_md_file', { path: selected });
-  await handleFileOpened(payload, host);
+  try {
+    const payload = await invoke<FileOpened>('read_md_file', { path: selected });
+    await handleFileOpened(payload, host);
+  } catch (e) {
+    renderFileError(host, "Can't open this file — it doesn't look like text.", String(selected));
+  }
+}
+
+export function renderFileError(host: HTMLElement, message: string, path?: string): void {
+  host.innerHTML = '';
+  const alert = document.createElement('div');
+  alert.setAttribute('role', 'alert');
+  alert.className = 'hashly-file-error';
+  const heading = document.createElement('p');
+  heading.className = 'hashly-file-error__message';
+  heading.textContent = message;
+  alert.appendChild(heading);
+  if (path) {
+    const detail = document.createElement('p');
+    detail.className = 'hashly-file-error__path';
+    detail.textContent = path;
+    alert.appendChild(detail);
+  }
+  host.appendChild(alert);
+  document.title = 'Hashly';
 }
 
 export function bootstrap(): void {

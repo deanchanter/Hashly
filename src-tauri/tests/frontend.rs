@@ -1066,6 +1066,90 @@ fn package_json_declares_tauri_apps_api_and_plugin_dialog_runtime_deps() {
 }
 
 #[test]
+fn frontend_main_ts_exports_render_file_error_and_pins_friendly_message() {
+    // Issue #10 — Friendly error for binary / non-UTF-8 .md.
+    //
+    // Background: Issue #4's `read_md_file` returns Err on non-UTF-8 input,
+    // which makes the frontend's `await invoke<FileOpened>('read_md_file', ...)`
+    // call reject. Slice D of #4 left that rejection uncaught, so a binary
+    // file opens as an unhandled promise rejection in the WebView console
+    // (with no user-visible feedback). Issue #10 fixes that by:
+    //
+    //   1. Exporting a `renderFileError(host, message, path?)` helper from
+    //      `src/main.ts` that clears the host and renders a static
+    //      `[role="alert"]` div carrying the friendly message.
+    //   2. Wrapping the `invoke('read_md_file', ...)` call in
+    //      `openFileViaDialog` in a try/catch that calls `renderFileError`
+    //      with the verbatim friendly message string on rejection.
+    //
+    // The friendly message is part of the public, user-visible contract.
+    // The exact wording — "Can't open this file — it doesn't look like text."
+    // — is pinned here verbatim (em-dash, apostrophe, sentence-case period)
+    // so a copy-edit drift surfaces in CI even when vitest is unavailable.
+    // The dynamic vitest test in src/__tests__/main.test.ts asserts the
+    // runtime DOM behavior; this static-contract test is the cargo-side
+    // belt to vitest's suspenders.
+    //
+    // Comments are stripped first (matching the aria-readonly defense
+    // pattern above) so a commented-out copy of the literal does NOT
+    // satisfy the assertion.
+    let main_ts = read_repo_file("src/main.ts");
+    let stripped = common::strip_comments(&main_ts);
+
+    // Named `renderFileError` export. Accept the three TypeScript-permitted
+    // forms (function declaration, async function declaration, const-assigned
+    // expression) — same set as `bootstrap` / `handleFileOpened` /
+    // `openFileViaDialog`.
+    let has_export = stripped.contains("export function renderFileError")
+        || stripped.contains("export async function renderFileError")
+        || stripped.contains("export const renderFileError");
+    assert!(
+        has_export,
+        "expected src/main.ts to expose a named `renderFileError` export — \
+         `export function renderFileError`, `export async function renderFileError`, \
+         or `export const renderFileError` (Issue #10 AC #1). After comment-strip:\n{}",
+        stripped
+    );
+
+    // Verbatim friendly-message pin. The em-dash (U+2014) and the
+    // typographic apostrophe (curly vs straight) MUST match the user-facing
+    // string. We pin the straight ASCII apostrophe form ("Can't") because
+    // that's the form a developer typing on a US keyboard will produce; if
+    // a future contributor swaps it for a curly U+2019, the test fires
+    // and the contributor must consciously update both this pin AND the
+    // vitest constant (which keeps the two in lockstep).
+    let expected = "Can't open this file \u{2014} it doesn't look like text.";
+    assert!(
+        stripped.contains(expected),
+        "expected src/main.ts to contain the verbatim friendly-error message \
+         {expected:?} (Issue #10 AC #1 — copy is part of the public contract; \
+         a soft-edit must update BOTH this pin AND the vitest constant in \
+         src/__tests__/main.test.ts). After comment-strip:\n{stripped}",
+    );
+
+    // The role="alert" anchor is the a11y contract. Without it, the error
+    // is announced (or not) inconsistently across screen readers — the
+    // ARIA live-region default for an unannounced div is "off". Pin the
+    // literal substring (both quote styles accepted) in real code, not a
+    // comment.
+    let normalized: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
+    let has_role_single = normalized.contains("'role','alert'")
+        || normalized.contains("setAttribute('role','alert')");
+    let has_role_double = normalized.contains("\"role\",\"alert\"")
+        || normalized.contains("setAttribute(\"role\",\"alert\")");
+    let has_role_literal_attr = normalized.contains("role=\"alert\"")
+        || normalized.contains("role='alert'");
+    assert!(
+        has_role_single || has_role_double || has_role_literal_attr,
+        "expected src/main.ts to set role=\"alert\" on the error element \
+         (Issue #10 AC #1) — required for screen readers to announce the \
+         friendly message via the ARIA live-region implicit on role=alert. \
+         After comment-strip and whitespace-strip:\n{}",
+        normalized
+    );
+}
+
+#[test]
 fn frontend_main_ts_sets_tabindex_0_on_editor_root() {
     // Issue #15 AC #2: `contenteditable="false"` strips the implicit tab-stop
     // that ProseMirror would otherwise have. Without `tabindex="0"` on the

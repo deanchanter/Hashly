@@ -327,6 +327,247 @@ describe('Issue #4 — handleFileOpened (Tauri-event-driven file open)', () => {
   });
 });
 
+describe('Issue #10 — friendly error for binary/non-UTF-8 file', () => {
+  // Background: Issue #4 shipped a Rust `read_md_file` that returns Err on
+  // non-UTF-8 input and a frontend `openFileViaDialog` helper that does
+  // `await invoke<FileOpened>('read_md_file', { path: selected })`. When the
+  // command rejects, the current frontend (slice D of #4) does NOT catch the
+  // rejection — so a binary file surfaces as an unhandled promise rejection
+  // in the WebView console. Issue #10 fixes that by:
+  //
+  //   1. Adding an exported `renderFileError(host, message, path?)` helper
+  //      that clears the host and renders a static `[role="alert"]` div with
+  //      the friendly message — no Milkdown editor is mounted.
+  //   2. Wrapping the `invoke('read_md_file', ...)` call in `openFileViaDialog`
+  //      in a try/catch that calls `renderFileError(host, "Can't open this
+  //      file — it doesn't look like text.", selected)` on rejection.
+  //   3. Updating `document.title` back to "Hashly" on failure (drop file name).
+  //
+  // Recovery (AC #3) is satisfied implicitly: `bootstrap()`'s
+  // `listen('menu-open-file', ...)` listener stays registered, so the next
+  // File>Open invocation runs through `openFileViaDialog` again. We pin that
+  // by asserting `handleFileOpened` re-mounts the editor over the alert div.
+
+  // The friendly message string is part of the public contract — copy-edits
+  // require updating BOTH this constant AND the static-contract pin in
+  // `src-tauri/tests/frontend.rs`. Pinned here verbatim (em-dash, apostrophe,
+  // sentence case) so a soft-edit doesn't drift the user-facing wording.
+  const FRIENDLY_MESSAGE = "Can't open this file — it doesn't look like text.";
+
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    host.id = 'editor';
+    document.body.appendChild(host);
+    document.title = 'Hashly';
+  });
+
+  it('renderFileError clears the host and inserts a [role="alert"] node with the verbatim friendly message (Test A)', async () => {
+    // RED until `renderFileError` is a named export of src/main.ts.
+    // The contract pinned here:
+    //   - `renderFileError` is callable as (host, message, path?).
+    //   - It clears any prior content in `host`.
+    //   - It inserts EXACTLY one element matching `[role="alert"]`.
+    //   - The alert element's text content contains the verbatim friendly
+    //     message string. We assert with `toContain` (not equality) so the
+    //     impl has freedom to wrap the message in nested elements (e.g. a
+    //     <p> for the message + a <p> for the path) without breaking the
+    //     test.
+    const mod = (await import('../main')) as unknown as {
+      renderFileError?: (host: HTMLElement, message: string, path?: string) => void;
+    };
+    expect(
+      typeof mod.renderFileError,
+      'expected `renderFileError` to be a named export of src/main.ts (Issue #10 AC #1)',
+    ).toBe('function');
+
+    // Pre-seed the host with stale content to verify renderFileError clears it.
+    host.innerHTML = '<p class="stale">stale content from a prior render</p>';
+
+    mod.renderFileError!(host, FRIENDLY_MESSAGE);
+
+    expect(
+      host.querySelector('.stale'),
+      'expected renderFileError to CLEAR prior host content (Issue #10 AC #1) — without the clear, a previously-rendered editor would visually overlap with the error message.',
+    ).toBeNull();
+
+    const alerts = host.querySelectorAll('[role="alert"]');
+    expect(
+      alerts.length,
+      `expected exactly one [role="alert"] element after renderFileError (Issue #10 AC #1); got ${alerts.length}.`,
+    ).toBe(1);
+
+    expect(
+      alerts[0]!.textContent ?? '',
+      `expected the [role="alert"] element to contain the verbatim friendly message ${JSON.stringify(FRIENDLY_MESSAGE)} (Issue #10 AC #1 — copy is part of the public contract).`,
+    ).toContain(FRIENDLY_MESSAGE);
+  });
+
+  it('renderFileError does NOT mount a Milkdown editor (no .ProseMirror inside host) (Test B)', async () => {
+    // The error path must be a static, non-interactive surface. If a
+    // Milkdown editor were mounted with the friendly message as content,
+    // a screen reader would announce a read-only document instead of the
+    // alert, and the editor's keybindings would compete with the user's
+    // recovery actions. Pin "no .ProseMirror" so a future contributor
+    // can't satisfy the message-rendering AC by routing the error
+    // through `mountEditor`.
+    const { renderFileError } = (await import('../main')) as unknown as {
+      renderFileError: (host: HTMLElement, message: string, path?: string) => void;
+    };
+
+    renderFileError(host, FRIENDLY_MESSAGE);
+
+    // Allow microtasks to settle — if a stray `mountEditor` call were
+    // accidentally invoked, its `.create()` promise would resolve here.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(
+      host.querySelector('.ProseMirror'),
+      'expected NO `.ProseMirror` element inside the host after renderFileError — the error surface must be static (Issue #10 AC #1).',
+    ).toBeNull();
+    expect(
+      host.querySelector('[contenteditable]'),
+      'expected NO `[contenteditable]` element inside the host after renderFileError — the error surface must be non-interactive (Issue #10 AC #1).',
+    ).toBeNull();
+  });
+
+  it('openFileViaDialog catches an invoke rejection and renders the friendly error (Test C — AC #1 + AC #2 no-crash)', async () => {
+    // RED until `openFileViaDialog` wraps the `invoke('read_md_file', ...)`
+    // call in a try/catch that calls `renderFileError(...)` on rejection.
+    // This is the integration test that ties Test A's helper into the
+    // dialog flow. We mock both Tauri JS modules so:
+    //   - `@tauri-apps/plugin-dialog`'s `open()` returns a fake path string
+    //     (simulating the user picking `/tmp/binary.bin` in the native
+    //     dialog).
+    //   - `@tauri-apps/api/core`'s `invoke()` REJECTS (simulating
+    //     `read_md_file` returning Err on non-UTF-8 input).
+    //
+    // The contract pinned here:
+    //   - `openFileViaDialog(host)` resolves successfully (no throw escapes
+    //     — AC #2 "app does not crash").
+    //   - After it resolves, `host.querySelector('[role="alert"]')` is
+    //     non-null (the error surface is rendered).
+    //   - The alert contains the verbatim friendly message (AC #1).
+    //
+    // Mocking note: we use `vi.doMock` BEFORE the dynamic import so the
+    // mocks are picked up when `../main` is re-evaluated. `vi.resetModules`
+    // in beforeEach gives us a fresh module slot.
+    vi.doMock('@tauri-apps/plugin-dialog', () => ({
+      open: vi.fn(async () => '/tmp/binary.bin'),
+    }));
+    vi.doMock('@tauri-apps/api/core', () => ({
+      invoke: vi.fn(async () => {
+        throw new Error('read_md_file failed: invalid utf-8');
+      }),
+    }));
+    vi.doMock('@tauri-apps/api/event', () => ({
+      listen: vi.fn(async () => () => {}),
+    }));
+
+    const { openFileViaDialog } = (await import('../main')) as unknown as {
+      openFileViaDialog: (host: HTMLElement) => Promise<void>;
+    };
+
+    // The whole point of AC #2: no throw escapes. `resolves.not.toThrow()`
+    // doubles as the no-crash assertion.
+    await expect(
+      openFileViaDialog(host),
+      'expected openFileViaDialog to RESOLVE (not throw) when invoke rejects (Issue #10 AC #2 — app does not crash).',
+    ).resolves.not.toThrow();
+
+    const alert = host.querySelector('[role="alert"]');
+    expect(
+      alert,
+      'expected a [role="alert"] element inside the host after openFileViaDialog catches an invoke rejection (Issue #10 AC #1 — friendly error renders in place of content).',
+    ).not.toBeNull();
+    expect(
+      alert!.textContent ?? '',
+      `expected the alert to contain the verbatim friendly message ${JSON.stringify(FRIENDLY_MESSAGE)} (Issue #10 AC #1).`,
+    ).toContain(FRIENDLY_MESSAGE);
+
+    // No editor must be mounted in the failure path.
+    expect(
+      host.querySelector('.ProseMirror'),
+      'expected NO `.ProseMirror` element after a failed open — the error path must NOT mount an editor (Issue #10 AC #1).',
+    ).toBeNull();
+
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/api/event');
+  });
+
+  it('after a failed open, handleFileOpened re-mounts a Milkdown editor over the alert (Test D — AC #3 recovery)', async () => {
+    // AC #3: "User can dismiss/recover and open another file via File > Open."
+    // The recovery path is implicit in the architecture (the
+    // `menu-open-file` listener stays registered, so the next File>Open
+    // re-enters openFileViaDialog), but we pin the DOM-level half here:
+    // calling `handleFileOpened` with a valid payload AFTER a failed open
+    // must REPLACE the alert div with a Milkdown editor — not stack the
+    // editor on top of the alert.
+    //
+    // Without this pin, a regression that wraps the alert in a sibling
+    // container (e.g. always-present "errors" panel) would silently leave
+    // a stale alert visible above the next-opened file's content.
+    const { renderFileError, handleFileOpened } = (await import('../main')) as unknown as {
+      renderFileError: (host: HTMLElement, message: string, path?: string) => void;
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+
+    // Simulate the failure path landing first.
+    renderFileError(host, FRIENDLY_MESSAGE, '/tmp/binary.bin');
+    expect(
+      host.querySelector('[role="alert"]'),
+      'precondition: the alert must be present before recovery is attempted',
+    ).not.toBeNull();
+
+    // Recovery: a subsequent successful open re-mounts the editor.
+    await handleFileOpened(
+      { path: '/tmp/recovered.md', name: 'recovered.md', content: '# Recovered' },
+      host,
+    );
+
+    expect(
+      host.querySelector('[role="alert"]'),
+      'expected the alert to be REMOVED after handleFileOpened (Issue #10 AC #3 — recovery replaces, not stacks). Without removal, the user sees the prior error overlaid on the new file.',
+    ).toBeNull();
+    expect(
+      host.querySelector('.ProseMirror'),
+      'expected a `.ProseMirror` editor inside the host after recovery (Issue #10 AC #3).',
+    ).not.toBeNull();
+    const h1 = host.querySelector('h1');
+    expect(
+      h1?.textContent ?? '',
+      'expected the recovered file content to render as <h1>Recovered</h1> (Issue #10 AC #3 — recovery actually loads the new file).',
+    ).toContain('Recovered');
+  });
+
+  it('renderFileError resets document.title to "Hashly" so the prior file name is dropped on failure', async () => {
+    // The failure-path title contract: when an open fails, the user must
+    // not see the (stale) prior file name in the title bar. We assert
+    // exact equality to "Hashly" so the implementation can't pass a
+    // softer "contains Hashly" check by leaving e.g. "binary.bin —
+    // Hashly" up.
+    const { renderFileError } = (await import('../main')) as unknown as {
+      renderFileError: (host: HTMLElement, message: string, path?: string) => void;
+    };
+
+    document.title = 'somefile.md — Hashly';
+    renderFileError(host, FRIENDLY_MESSAGE, '/tmp/binary.bin');
+
+    expect(
+      document.title,
+      `expected document.title to be reset to "Hashly" on failure (Issue #10 — drop the file name so the user doesn't see a stale prior file name with an error). Got: ${JSON.stringify(document.title)}`,
+    ).toBe('Hashly');
+  });
+});
+
 describe('Issue #16 — installDragDropGuard (window-level dragover/drop preventDefault)', () => {
   // Background: ProseMirror only `preventDefault`s drag events when the editor
   // is editable. In our read-only mode (`editable: () => false`) it leaves
