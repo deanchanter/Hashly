@@ -200,14 +200,27 @@ fn ci_workflow_node_job_uses_setup_node_v4() {
     // paste.
     let cfg = load_workflow();
     let (job_name, job) = find_node_job(&cfg);
-    let has_v4 = steps(&job)
+    let has_setup_node = steps(&job)
         .iter()
-        .any(|s| step_uses(s, "actions/setup-node@v4"));
+        .any(|s| step_uses(s, "actions/setup-node@"));
     assert!(
-        has_v4,
-        "expected job `{}` to use `actions/setup-node@v4` (Issue #20 AC #2), got steps: {:?}",
+        has_setup_node,
+        "expected job `{}` to use `actions/setup-node@<ref>` (Issue #20 AC #2), got steps: {:?}",
         job_name,
         steps(&job)
+    );
+
+    // Issue #24: the action must be pinned to a 40-char SHA with a `# v4`
+    // version comment trailing — see ci_workflow_uses_lines_pin_sha_with_version_comment
+    // for the SHA-pin shape contract; here we just pin the *major version* tag
+    // contract so a bump from v4 → v5 cannot land silently inside an SHA.
+    let raw = read_workflow_raw();
+    assert!(
+        raw_uses_line_for(&raw, "actions/setup-node")
+            .map(|line| line.contains("# v4"))
+            .unwrap_or(false),
+        "expected the `actions/setup-node` uses-line in ci.yml to carry a trailing `# v4` major-version comment after the SHA pin (Issue #24). Got line: {:?}",
+        raw_uses_line_for(&raw, "actions/setup-node")
     );
 }
 
@@ -412,9 +425,20 @@ fn ci_workflow_rust_job_installs_stable_toolchain() {
     let cfg = load_workflow();
     let (job_name, job) = find_rust_job(&cfg);
 
+    // Issue #24: the dtolnay action is now SHA-pinned, so the channel selector
+    // (`stable`) lives in the trailing `# stable` comment rather than the
+    // `uses:` ref. Accept any dtolnay/rust-toolchain pin and require either
+    // an inline `@stable` ref OR the trailing `# stable` major-comment.
+    let raw = read_workflow_raw();
     let has_dtolnay_stable = steps(&job)
         .iter()
-        .any(|s| step_uses(s, "dtolnay/rust-toolchain@stable"));
+        .any(|s| step_uses(s, "dtolnay/rust-toolchain@stable"))
+        || (steps(&job)
+            .iter()
+            .any(|s| step_uses(s, "dtolnay/rust-toolchain@"))
+            && raw_uses_line_for(&raw, "dtolnay/rust-toolchain")
+                .map(|line| line.contains("# stable"))
+                .unwrap_or(false));
 
     // For the actions-rust-lang variant, the channel is configured via
     // `with.toolchain: stable`, not in the `uses:` ref. So accept either:
@@ -550,14 +574,150 @@ fn ci_workflow_rust_job_uses_swatinem_rust_cache() {
 
     let has_cache = steps(&job)
         .iter()
-        .any(|s| step_uses(s, "Swatinem/rust-cache@v2"));
+        .any(|s| step_uses(s, "Swatinem/rust-cache@"));
 
     assert!(
         has_cache,
-        "expected job `{}` to have a step `uses: Swatinem/rust-cache@v2` (Issue #20 AC #4: cache cargo registry + target/ between runs). Got steps: {:?}",
+        "expected job `{}` to have a step `uses: Swatinem/rust-cache@<ref>` (Issue #20 AC #4: cache cargo registry + target/ between runs). Got steps: {:?}",
         job_name,
         steps(&job)
     );
+
+    // Issue #24: pin the major version (v2) via trailing `# v2` comment now
+    // that the action is SHA-pinned. Major version drift (v2 → v3) breaks the
+    // cache format contract.
+    let raw = read_workflow_raw();
+    assert!(
+        raw_uses_line_for(&raw, "Swatinem/rust-cache")
+            .map(|line| line.contains("# v2"))
+            .unwrap_or(false),
+        "expected the `Swatinem/rust-cache` uses-line in ci.yml to carry a trailing `# v2` major-version comment after the SHA pin (Issue #24). Got line: {:?}",
+        raw_uses_line_for(&raw, "Swatinem/rust-cache")
+    );
+}
+
+// =====================================================================
+// Issue #24 — Pin GitHub Actions to commit SHAs (supply-chain hardening).
+//
+// Floating tag refs (`@v4`, `@stable`, `@v2`) are mutable: a maintainer (or
+// a compromised account) can re-point the tag to a different commit. Pinning
+// each `uses:` to a 40-char commit SHA, with the version tag preserved as a
+// trailing comment, removes the silent-drift attack surface.
+//
+// Contract:
+//   1. Every `uses:` line in ci.yml refers to `<owner>/<repo>@<40-char hex>`.
+//      Bare `actions/`, `local`, or `docker://` uses are accepted as-is —
+//      the SHA-pin contract applies only to third-party GitHub Actions.
+//   2. Every SHA-pinned line has a trailing `# <ref>` comment (typically
+//      `# v4`, `# v4.2.1`, `# stable`) so a contributor can read the
+//      intended version without having to look up the SHA.
+// =====================================================================
+
+/// Raw text of `.github/workflows/ci.yml`. Used by the SHA-pin contract
+/// tests below — they need access to comments, which serde_yaml drops on
+/// parse.
+fn read_workflow_raw() -> String {
+    let path = workflow_path();
+    fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("could not read {}: {}", path.display(), e)
+    })
+}
+
+/// Return the first raw line in `ci.yml` whose `uses:` value starts with
+/// the given action repo (e.g. `actions/setup-node`). Trims surrounding
+/// whitespace. Returns `None` if no such line is present.
+fn raw_uses_line_for<'a>(raw: &'a str, action_repo: &str) -> Option<&'a str> {
+    raw.lines()
+        .map(str::trim)
+        .find(|line| {
+            // Match leading `- uses:` or bare `uses:`, then the action repo.
+            let after_uses = line
+                .trim_start_matches('-')
+                .trim()
+                .strip_prefix("uses:")
+                .map(str::trim_start);
+            after_uses
+                .map(|val| val.starts_with(action_repo))
+                .unwrap_or(false)
+        })
+}
+
+/// Extract every `uses:` value from raw `ci.yml` text along with the trailing
+/// inline comment (if any). Returns `(value, comment_or_empty)` pairs.
+fn collect_uses_with_comments(raw: &str) -> Vec<(String, String)> {
+    raw.lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            let after_uses = line
+                .trim_start_matches('-')
+                .trim()
+                .strip_prefix("uses:")
+                .map(str::trim_start)?;
+            // Split on the first `#` to separate value from comment.
+            // Inside an action ref `#` cannot legally appear, so a bare
+            // `#` always begins the trailing comment.
+            let (val, comment) = match after_uses.find('#') {
+                Some(idx) => (after_uses[..idx].trim().to_string(), after_uses[idx..].trim().to_string()),
+                None => (after_uses.trim().to_string(), String::new()),
+            };
+            Some((val, comment))
+        })
+        .collect()
+}
+
+#[test]
+fn ci_workflow_uses_lines_pin_sha_with_version_comment() {
+    // Issue #24: every `uses:` line must be SHA-pinned (40-char hex commit
+    // SHA in lowercase) AND carry a trailing `# <ref>` version comment so
+    // the human-readable version intent is preserved.
+    //
+    // The hex-only check is intentionally strict — `actions/checkout@v4` (a
+    // tag) and `dtolnay/rust-toolchain@stable` (a branch) are mutable and
+    // therefore rejected. A contributor adding a new step must look up the
+    // SHA and pin it, mirroring the discipline applied to the original four
+    // actions in this milestone run.
+    let raw = read_workflow_raw();
+    let pairs = collect_uses_with_comments(&raw);
+
+    assert!(
+        !pairs.is_empty(),
+        "expected at least one `uses:` line in ci.yml; the workflow is empty?"
+    );
+
+    for (value, comment) in &pairs {
+        // Split into `<repo>@<ref>`. We require the `@<ref>` half to be a
+        // 40-char hex SHA.
+        let (repo, sha) = value
+            .rsplit_once('@')
+            .unwrap_or_else(|| panic!(
+                "expected uses-line `{}` to have shape `<owner>/<repo>@<sha>` (Issue #24)",
+                value
+            ));
+        assert_eq!(
+            sha.len(),
+            40,
+            "expected `uses: {}` to be pinned to a 40-char commit SHA (Issue #24, supply-chain hardening). Got ref `{}` of length {}",
+            value, sha, sha.len()
+        );
+        assert!(
+            sha.chars().all(|c| c.is_ascii_hexdigit() && (c.is_ascii_digit() || c.is_ascii_lowercase())),
+            "expected `uses: {}` ref to be lowercase hex (Issue #24). Got: `{}`",
+            value, sha
+        );
+
+        // Each SHA-pinned line must carry a trailing `# <something>` comment
+        // so the human-readable version intent is preserved.
+        assert!(
+            !comment.is_empty(),
+            "expected `uses: {}` to carry a trailing `# v<X>` (or `# <ref>`) comment after the SHA pin so the version intent is human-readable (Issue #24). repo: `{}`, sha: `{}`",
+            value, repo, sha
+        );
+        assert!(
+            comment.starts_with('#'),
+            "expected uses-line trailing comment to start with `#`, got: `{}`",
+            comment
+        );
+    }
 }
 
 // =====================================================================
