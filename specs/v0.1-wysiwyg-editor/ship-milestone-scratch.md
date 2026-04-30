@@ -163,3 +163,20 @@ macOS-runtime caveats explicitly out of scope (per ship-milestone decision):
 User will verify these manually post-PR.
 
 Reviewer status: team-lead substituted. Considered the security model: CSP locks script execution, raw HTML in markdown is escaped by commonmark preset (#14 regression pin), file path is passed Rust→frontend→Rust IPC (no shell injection vector since plugin-dialog returns the OS-level path verbatim and read_md_file calls fs::read_to_string with no shell). No concerns.
+
+### #10 — Friendly error for binary / non-UTF-8 file
+
+Commits:
+- `af35c84 feat(#10): friendly error for binary / non-UTF-8 markdown files`
+
+Implementation: new exported `renderFileError(host, message, path?)` helper builds a `role="alert"` DOM (textContent only — no innerHTML for user-controlled strings). `openFileViaDialog`'s `invoke('read_md_file')` call is wrapped in try/catch; the catch arm calls renderFileError with the contracted message. `document.title` resets to "Hashly" on error.
+
+Tests: npm 19→24 (+5: alert renders + verbatim message + no-mount + recovery via handleFileOpened + invoke-rejection wired to renderFileError); cargo frontend 22→23 (+1 static contract — main.ts exports renderFileError + contains verbatim message).
+
+Critical fixed: 0
+Non-critical filed: 1
+- #26 — Differentiate error UI for non-UTF-8 vs other invoke failures (the friendly message is hardcoded for all invoke errors; permission-denied / IPC-disconnect would also show "doesn't look like text"). Filed under milestone label.
+
+Reviewer status: security agent spawned and went idle without producing findings (third occurrence in this run). Team-lead did the adversarial pass directly.
+
+Process note: an unrelated edit to `claude-docker.sh` (Docker resource preflight warning) appeared in the working tree mid-iteration; not committed as part of #10 since it's outside scope.
