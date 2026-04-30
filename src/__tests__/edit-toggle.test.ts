@@ -1,6 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { editorViewCtx } from '@milkdown/core';
 import type { Editor } from '@milkdown/core';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+// Read style.css from disk rather than via Vite's `?raw` import. Reason:
+// Vite 7 + Vitest 4 strip CSS imports through their CSS plugin BEFORE
+// the `?raw` query is honored, returning an empty string. `fs.readFileSync`
+// at test time produces the actual file bytes, matching the pattern used
+// by `src-tauri/tests/frontend.rs` (the cargo-side static contract).
+//
+// Path is resolved relative to the test file so it works regardless of
+// the cwd Vitest is launched from.
+const STYLE_CSS_PATH = resolve(__dirname, '..', 'style.css');
+const readStyleCss = (): string => readFileSync(STYLE_CSS_PATH, 'utf-8');
 
 // Issue #6 — Read ↔ Edit toggle (WYSIWYG edit mode).
 //
@@ -778,5 +791,88 @@ describe('Issue #6 fix-loop C1 — toggle button reflects mode (aria-pressed + t
       (toggle.textContent ?? '').trim(),
       'expected the textContent to restore to the initial read-mode label after returning to read mode (Issue #6 fix-loop C1 — the toggle must not get stuck in the "edit" label after exiting edit mode).',
     ).toBe(initialLabel);
+  });
+});
+
+// C3 — Cursor: `text` in edit mode.
+//
+// Read mode already pins `.ProseMirror { cursor: default }` (issue #15).
+// In edit mode the user is typing — the cursor must be the I-beam (text)
+// so the affordance matches. Without this, hovering an editable doc still
+// shows the arrow cursor, which is genuinely confusing.
+//
+// Why a static-contract test on style.css rather than a runtime
+// `getComputedStyle` assertion: jsdom's getComputedStyle implementation
+// historically gaps on attribute selectors (`[contenteditable="true"]`),
+// returning the value for the bare class rule instead. A static check
+// against the file source avoids the jsdom ambiguity AND guards against
+// a contributor commenting out the rule (we strip comments before
+// matching, same defense as the cargo `frontend.rs` pins).
+
+describe('Issue #6 fix-loop C3 — cursor is `text` in edit mode (CSS contract)', () => {
+  // Strip /* ... */ and // comments from CSS — CSS only has /* */ per
+  // spec, but the helper handles both safely. We then strip ALL whitespace
+  // so a contributor's choice of formatting / line breaks does not break
+  // the assertion.
+  const stripCssComments = (s: string): string =>
+    s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const compact = (s: string): string => s.replace(/\s+/g, '');
+
+  it('src/style.css contains a rule scoped to .ProseMirror[contenteditable="true"] (or analogous) with cursor: text', () => {
+    const stripped = stripCssComments(readStyleCss());
+    const norm = compact(stripped);
+
+    // Accept either order of the compound selector. ProseMirror's edit
+    // mode flips contenteditable to "true"; the rule must apply only
+    // then, not in read mode (so the existing `.ProseMirror { cursor:
+    // default }` rule continues to govern read mode).
+    const hasOrderA = norm.includes('[contenteditable="true"].ProseMirror{cursor:text');
+    const hasOrderB = norm.includes('.ProseMirror[contenteditable="true"]{cursor:text');
+    // Single-quoted attribute selectors are also valid CSS.
+    const hasOrderASingle = norm.includes("[contenteditable='true'].ProseMirror{cursor:text");
+    const hasOrderBSingle = norm.includes(".ProseMirror[contenteditable='true']{cursor:text");
+
+    expect(
+      hasOrderA || hasOrderB || hasOrderASingle || hasOrderBSingle,
+      `expected src/style.css to contain a rule like \`.ProseMirror[contenteditable="true"] { cursor: text; ... }\` so the I-beam shows in edit mode (Issue #6 fix-loop C3). The bare \`.ProseMirror { cursor: default }\` rule must continue to govern read mode — only the edit-mode rule needs adding. After comment-strip and whitespace-strip, style.css contained:\n${norm}`,
+    ).toBe(true);
+  });
+
+  it('the edit-mode cursor rule has higher specificity than the read-mode rule (so edit mode wins)', () => {
+    // The read-mode rule is `.ProseMirror { cursor: default }` (specificity
+    // 0,0,1,0). The edit-mode rule must have higher specificity to win
+    // when both apply. `[contenteditable="true"].ProseMirror` is 0,0,2,0,
+    // which IS higher. We pin the form factor by asserting the edit
+    // selector contains BOTH `.ProseMirror` AND `[contenteditable=...]`
+    // (it's a compound, not a sibling/descendant rule that might lose to
+    // an unrelated read-mode rule update). Without this, a contributor
+    // could ship `.ProseMirror.editable { cursor: text }` which has the
+    // same specificity as the read-mode rule and depends on source
+    // ordering — fragile.
+    const stripped = stripCssComments(readStyleCss());
+    const norm = compact(stripped);
+
+    // Find the substring containing the edit-mode rule (one of four forms
+    // accepted in the prior test). Pull out the selector part — chars up
+    // to the next `{`.
+    const candidates = [
+      '[contenteditable="true"].ProseMirror{',
+      '.ProseMirror[contenteditable="true"]{',
+      "[contenteditable='true'].ProseMirror{",
+      ".ProseMirror[contenteditable='true']{",
+    ];
+    const found = candidates.find((c) => norm.includes(c));
+    expect(
+      found,
+      'precondition: one of the four expected edit-mode selector forms must be present (failure here means the prior test should have caught it; this is a sanity check)',
+    ).toBeDefined();
+    // Both `.ProseMirror` and `[contenteditable=...]` must appear in the
+    // selector before the `{` — i.e. compound, not a longer chain that
+    // could include read-mode-equivalent specificity.
+    const sel = found!.slice(0, -1); // drop trailing `{`
+    expect(
+      sel.includes('.ProseMirror') && sel.includes('contenteditable'),
+      `expected the edit-mode cursor selector to be a compound of .ProseMirror AND [contenteditable=...] for higher specificity than the read-mode rule (Issue #6 fix-loop C3 — without this, source ordering decides which rule wins). Got selector: ${sel}`,
+    ).toBe(true);
   });
 });
