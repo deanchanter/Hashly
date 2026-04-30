@@ -11,7 +11,7 @@ export async function mountEditor(host: HTMLElement, content: string): Promise<E
       ctx.update(editorViewOptionsCtx, (prev) => ({
         ...prev,
         editable: () => false,
-        attributes: { 'aria-readonly': 'true' },
+        attributes: { 'aria-readonly': 'true', 'tabindex': '0' },
       }));
     })
     .use(commonmark)
