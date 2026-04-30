@@ -83,6 +83,10 @@ let currentEditor: Editor | null = null;
 let currentEditorMode: EditorMode = 'read';
 let currentEditorHost: HTMLElement | null = null;
 
+export function getCurrentEditor(): Editor | null {
+  return currentEditor;
+}
+
 async function toggleEditMode(): Promise<void> {
   const editor = currentEditor;
   const host = currentEditorHost;
