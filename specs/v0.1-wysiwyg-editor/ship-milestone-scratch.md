@@ -51,3 +51,37 @@ Critical fixed: 0
 Non-critical filed: 0
 Process note: qa-tdd committed RED tests despite the brief instruction to wait for green. Team-lead caught it (suite was failing), pinged builder to apply impl, and committed feat() commit himself since both qa-tdd and builder went idle without committing. Tmux orphans accumulated; user manually had me clean them between iterations.
 Reviewer status: team-lead substituted (cursor + tabindex changes are minimal-risk; impact on edit mode noted in issue body and will be revisited in #6).
+
+### #24 — Pin GitHub Actions to commit SHAs
+
+Commits:
+- `362f416 test(#24): pin SHA-pin contract on every uses: in ci.yml`
+- `217cd79 feat(#24): pin GitHub Actions to commit SHAs (supply-chain hardening)`
+
+SHAs pinned (looked up via `gh api repos/<owner>/<repo>/git/ref/...`):
+- actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+- actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+- dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+- Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+Tests: ci_workflow.rs 9→12 (+3 SHA-pin contract tests; pre-existing tests relaxed to accept SHA refs but still enforce major-version intent via trailing `# v<n>` / `# stable` comments). Full cargo + npm green.
+
+Critical fixed: 0
+Non-critical filed: 0
+Process note: shipped directly by team-lead — no team spawned. Change is contained (4 yaml lines + test contract update) and prior team agents have been unreliable; faster path for trivial milestone hygiene.
+
+### #17 — Heading slugger uniqueness
+
+Commits:
+- `603d781 feat(#17): override headingIdGenerator with standard slug-counter format`
+
+Discovery: dry-run found Milkdown's `syncHeadingIdPlugin` already disambiguates duplicates, but using non-standard `slug-#2`/`slug-#3` format. Issue's stated "duplicate id" claim was technically wrong — but the observed format breaks in-doc anchor links written in GitHub-style `[link](#hello-1)`. Fix: override `headingIdGenerator.key` with closure-captured base→counter Map.
+
+Builder's contribution beyond the brief: added a `WeakMap<Node, string>` cache so the same heading node returns the same id across re-renders (preventing counter-creep when `syncHeadingIdPlugin` re-runs on every transaction). Also short-circuits when `node.attrs.id` is set.
+
+Tests: npm 9→10 (+1 dynamic id-uniqueness); cargo frontend 14→15 (+1 static contract). All green.
+
+Critical fixed: 0
+Non-critical filed: 0
+Process note: qa-tdd wrote tests but never messaged builder; team-lead pinged builder directly with the implementation details. Both agents went idle without committing; team-lead committed.
+Reviewer status: team-lead substituted. Considered: empty-heading edge case (`# ` → id=""); accepted (matches default Milkdown behavior, not introduced by this fix).
