@@ -113,9 +113,24 @@ async function toggleEditMode(): Promise<void> {
   currentEditor = next;
   currentEditorMode = nextMode;
   currentEditorHost = host;
+  syncEditToggleUi();
 }
 
 let editToggleInstalled = false;
+let editToggleButton: HTMLButtonElement | null = null;
+
+const EDIT_TOGGLE_LABEL_READ = 'Edit';
+const EDIT_TOGGLE_LABEL_EDIT = 'Read';
+
+function syncEditToggleUi(): void {
+  if (!editToggleButton) return;
+  editToggleButton.setAttribute(
+    'aria-pressed',
+    currentEditorMode === 'edit' ? 'true' : 'false',
+  );
+  editToggleButton.textContent =
+    currentEditorMode === 'edit' ? EDIT_TOGGLE_LABEL_EDIT : EDIT_TOGGLE_LABEL_READ;
+}
 
 function installEditToggle(): void {
   if (editToggleInstalled) return;
@@ -124,11 +139,13 @@ function installEditToggle(): void {
   const button = document.createElement('button');
   button.type = 'button';
   button.setAttribute('data-testid', 'edit-toggle');
+  button.setAttribute('aria-pressed', 'false');
   button.className = 'hashly-edit-toggle';
-  button.textContent = 'Edit';
+  button.textContent = EDIT_TOGGLE_LABEL_READ;
   button.addEventListener('click', () => {
     void toggleEditMode();
   });
+  editToggleButton = button;
   document.body.appendChild(button);
 }
 
@@ -139,6 +156,7 @@ export async function handleFileOpened(payload: FileOpened, host: HTMLElement): 
   currentEditor = editor;
   currentEditorMode = 'read';
   currentEditorHost = host;
+  syncEditToggleUi();
 }
 
 export async function openFileViaDialog(host: HTMLElement): Promise<void> {
