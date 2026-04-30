@@ -1211,3 +1211,89 @@ describe('Issue #6 fix-loop C6 — handleFileOpened destroys the prior editor', 
     ).not.toBe(E2);
   });
 });
+
+// C2 — Toggle button visibly placed (CSS contract).
+//
+// `installEditToggle` currently appends the button as the last child of
+// document.body, with no styling — so it lands BELOW the (potentially
+// scrolled-off) editor content, often invisible. The reviewer flagged
+// this as a P1 visual regression.
+//
+// Pinned contract (static — same fs.readFileSync pattern as C3 because
+// Vite/Vitest strips CSS imports in test mode):
+//   1. `.hashly-edit-toggle` rule exists in style.css with
+//      `position: fixed` (or `absolute`) so the button is taken out of
+//      normal flow and floats over the editor.
+//   2. The rule sets one vertical offset (top: or bottom:) AND one
+//      horizontal offset (left: or right:) so the button has a
+//      deterministic position.
+//   3. The rule sets z-index so the button sits above any sibling
+//      elements (the editor, the alert from #10's renderFileError,
+//      etc.). z-index doesn't need a specific value pinned — just be
+//      present.
+//
+// We don't pin the EXACT offsets (`0.75rem` vs `1rem` etc.) — that's a
+// designer call. The form factor (positioned + offset + stacking) is
+// what's pinned.
+
+describe('Issue #6 fix-loop C2 — toggle button visibly placed (CSS contract)', () => {
+  const stripCssComments = (s: string): string =>
+    s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  // Find the body of the rule whose selector is exactly `selector` (after
+  // whitespace normalization). Returns null if not found.
+  const findRuleBody = (css: string, selector: string): string | null => {
+    const norm = css.replace(/\s+/g, '');
+    const target = `${selector}{`;
+    const idx = norm.indexOf(target);
+    if (idx < 0) return null;
+    const end = norm.indexOf('}', idx);
+    if (end < 0) return null;
+    return norm.slice(idx + target.length, end);
+  };
+
+  it('src/style.css contains a .hashly-edit-toggle rule with position: fixed (or absolute)', () => {
+    const css = stripCssComments(readStyleCss());
+    const body = findRuleBody(css, '.hashly-edit-toggle');
+    expect(
+      body,
+      `expected a \`.hashly-edit-toggle { ... }\` rule in src/style.css (Issue #6 fix-loop C2 — without one, the toggle lands below the editor with no styling and is often visually offscreen). After comment-strip + whitespace-strip, style.css was:\n${css.replace(/\s+/g, '')}`,
+    ).not.toBeNull();
+
+    const hasFixed = body!.includes('position:fixed');
+    const hasAbsolute = body!.includes('position:absolute');
+    expect(
+      hasFixed || hasAbsolute,
+      `expected \`position: fixed\` (preferred) or \`position: absolute\` in .hashly-edit-toggle so the button is taken out of normal flow and floats above the editor instead of stacking below it. Issue #6 fix-loop C2. Rule body was:\n${body}`,
+    ).toBe(true);
+  });
+
+  it('the .hashly-edit-toggle rule anchors the button with both a vertical and horizontal offset', () => {
+    const css = stripCssComments(readStyleCss());
+    const body = findRuleBody(css, '.hashly-edit-toggle');
+    expect(body, 'precondition: rule must exist (covered by the prior test)').not.toBeNull();
+
+    const hasVertical = /(?:^|;)(top|bottom):/.test(body!);
+    const hasHorizontal = /(?:^|;)(left|right):/.test(body!);
+    expect(
+      hasVertical,
+      `expected a \`top:\` or \`bottom:\` offset on .hashly-edit-toggle so the button is anchored vertically (Issue #6 fix-loop C2 — without an offset, position:fixed pins the button to top-left of the viewport, which can collide with system chrome). Rule body was:\n${body}`,
+    ).toBe(true);
+    expect(
+      hasHorizontal,
+      `expected a \`left:\` or \`right:\` offset on .hashly-edit-toggle so the button is anchored horizontally. Rule body was:\n${body}`,
+    ).toBe(true);
+  });
+
+  it('the .hashly-edit-toggle rule sets z-index so the button sits above editor / alert siblings', () => {
+    const css = stripCssComments(readStyleCss());
+    const body = findRuleBody(css, '.hashly-edit-toggle');
+    expect(body, 'precondition: rule must exist').not.toBeNull();
+
+    const hasZIndex = /(?:^|;)z-index:/.test(body!);
+    expect(
+      hasZIndex,
+      `expected a \`z-index:\` declaration on .hashly-edit-toggle so the button stays above the editor content AND above the renderFileError alert (Issue #6 fix-loop C2 — without z-index, the alert from #10 could overlap and block the toggle). Any positive value is acceptable; the form factor (declaration present) is what's pinned. Rule body was:\n${body}`,
+    ).toBe(true);
+  });
+});
