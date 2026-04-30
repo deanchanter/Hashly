@@ -12,6 +12,7 @@
   "dependencies": {
     "@milkdown/core": "^7.20.0",
     "@milkdown/preset-commonmark": "^7.20.0",
+    "@milkdown/preset-gfm": "^7.20.0",
     "@milkdown/prose": "^7.20.0"
   },
   "devDependencies": {

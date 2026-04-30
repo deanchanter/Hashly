@@ -1,7 +1,9 @@
 import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/core';
 import { commonmark, headingIdGenerator } from '@milkdown/preset-commonmark';
+import { gfm } from '@milkdown/preset-gfm';
 import '@milkdown/prose/view/style/prosemirror.css';
 import './style.css';
+import showcase from './fixtures/commonmark-showcase.md?raw';
 
 export async function mountEditor(host: HTMLElement, content: string): Promise<Editor> {
   return Editor.make()
@@ -31,6 +33,7 @@ export async function mountEditor(host: HTMLElement, content: string): Promise<E
       });
     })
     .use(commonmark)
+    .use(gfm)
     .create();
 }
 
@@ -54,7 +57,7 @@ export function bootstrap(): void {
     console.warn('[hashly] #editor host element not found; mountEditor not auto-invoked');
     return;
   }
-  void mountEditor(host, '# Hello');
+  void mountEditor(host, showcase);
 }
 
 if (import.meta.env.MODE !== 'test') {

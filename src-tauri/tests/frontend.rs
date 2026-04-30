@@ -205,20 +205,29 @@ fn package_json_declares_milkdown_dependencies() {
 }
 
 #[test]
-fn frontend_main_ts_uses_hello_h1_default_value() {
-    // AC #2: Milkdown renders the literal `# Hello` string as a styled H1.
+fn frontend_main_ts_wires_default_value_from_showcase_fixture() {
+    // AC #2 (originally pinned the `# Hello` literal under issue #18; updated
+    // for issue #3): the editor's default content is now sourced from the
+    // bundled CommonMark + GFM showcase fixture at
+    // `src/fixtures/commonmark-showcase.md`, loaded via Vite's `?raw`
+    // import. The contract is therefore:
+    //   1. main.ts imports the fixture as a named binding from `?raw`
+    //      (so a contributor can't drop the fixture without the type-check
+    //      catching it).
+    //   2. main.ts still wires `defaultValueCtx` (so the import is
+    //      actually used, not orphaned).
     let main_ts = read_repo_file("src/main.ts");
+    let stripped = common::strip_comments(&main_ts);
 
-    let has_hello_literal = main_ts.contains("'# Hello'") || main_ts.contains("\"# Hello\"");
     assert!(
-        has_hello_literal,
-        "expected src/main.ts to contain the string literal `# Hello` (single- or double-quoted), got:\n{}",
-        main_ts
+        stripped.contains("./fixtures/commonmark-showcase.md?raw"),
+        "expected src/main.ts to import the showcase fixture via `import … from './fixtures/commonmark-showcase.md?raw'` (Issue #3 AC #2). After comment-strip:\n{}",
+        stripped
     );
     assert!(
-        main_ts.contains("defaultValueCtx"),
-        "expected src/main.ts to wire the default value via `defaultValueCtx`, got:\n{}",
-        main_ts
+        stripped.contains("defaultValueCtx"),
+        "expected src/main.ts to wire the default value via `defaultValueCtx` (Issue #3 AC #2 — the showcase fixture must reach the editor through the same channel as the previous `# Hello` literal). After comment-strip:\n{}",
+        stripped
     );
 }
 
@@ -549,6 +558,190 @@ fn frontend_main_ts_installs_window_level_dragover_drop_preventdefault_guard() {
          (Issue #16 AC #1). Registering a listener without calling preventDefault is a no-op \
          — the WebView still navigates to file://... After comment-strip:\n{}",
         stripped
+    );
+}
+
+#[test]
+fn fixture_commonmark_showcase_exists_and_covers_all_required_elements() {
+    // Issue #3 AC #1 — A fixture markdown file/string bundled in the repo
+    // must cover: headings h1–h6, ordered + unordered + nested lists, fenced
+    // code blocks, inline code, GFM tables, links, images, blockquotes,
+    // bold/italic, and horizontal rules.
+    //
+    // We pin the file path AND a substring-token contract for every required
+    // element so the contract is checkable from the cargo job alone (the
+    // dynamic vitest tests in src/__tests__/main.test.ts handle DOM-level
+    // rendering correctness; this is the file-level belt to those suspenders).
+    //
+    // Rationale for substring tokens (not parsing): keeping the contract at
+    // raw-bytes lets a contributor add prose around the demo blocks without
+    // accidentally regressing the contract — and it's the same pattern other
+    // file-level pins (vitest config / package.json) follow elsewhere in this
+    // suite.
+    let path = repo_root().join("src/fixtures/commonmark-showcase.md");
+    assert!(
+        path.exists(),
+        "expected fixture `src/fixtures/commonmark-showcase.md` to exist (Issue #3 AC #1), but {} does not exist",
+        path.display()
+    );
+
+    let md = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
+
+    // Headings h1–h6: pin each level on its own line (anchored with \n) so a
+    // stray `### ` inside a code block can't accidentally satisfy a higher
+    // level. Allow the very-first line variant by also accepting a leading
+    // `^`-style match via a simple OR with prefix-of-file.
+    let has_heading = |level: usize| -> bool {
+        let token = format!("\n{} ", "#".repeat(level));
+        let prefix = format!("{} ", "#".repeat(level));
+        md.contains(&token) || md.starts_with(&prefix)
+    };
+    for level in 1..=6 {
+        assert!(
+            has_heading(level),
+            "expected fixture to contain an H{level} heading (line starting with `{} `) for Issue #3 AC #1; fixture was:\n{}",
+            "#".repeat(level),
+            md,
+        );
+    }
+
+    // Ordered list: a line beginning `1. ` (anchored).
+    assert!(
+        md.contains("\n1. ") || md.starts_with("1. "),
+        "expected fixture to contain an ordered list (line starting with `1. `) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Unordered list: a line beginning `- ` (anchored).
+    assert!(
+        md.contains("\n- ") || md.starts_with("- "),
+        "expected fixture to contain an unordered list (line starting with `- `) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Nested list: a line indented by 2+ spaces and then a `- ` or `* ` bullet.
+    // Pin BOTH common indent widths (2 and 4 spaces) as acceptable.
+    let has_nested =
+        md.contains("\n  - ") || md.contains("\n    - ") || md.contains("\n  * ") || md.contains("\n    * ");
+    assert!(
+        has_nested,
+        "expected fixture to contain a NESTED list item (indented `- ` or `* ` bullet) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Fenced code block: a triple-backtick fence must appear.
+    assert!(
+        md.contains("```"),
+        "expected fixture to contain a fenced code block (triple backticks) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Inline code: a single backtick must appear OUTSIDE the fenced block.
+    // We approximate by requiring the file contain at least one backtick run
+    // of length 1 (i.e. ` ` ` not preceded/followed by another backtick).
+    // Simple approach: split off all triple-backtick fences and check the
+    // remainder for backticks.
+    let mut without_fences = String::new();
+    let mut in_fence = false;
+    for chunk in md.split("```") {
+        if !in_fence {
+            without_fences.push_str(chunk);
+        }
+        in_fence = !in_fence;
+    }
+    assert!(
+        without_fences.contains('`'),
+        "expected fixture to contain INLINE code (backtick-wrapped span outside fenced blocks) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // GFM table: a header separator line containing `|` and `---`. We
+    // pin a `|---` or `| ---` substring which only appears in a table
+    // separator row.
+    let has_table_separator = md.contains("|---") || md.contains("| ---");
+    assert!(
+        has_table_separator,
+        "expected fixture to contain a GFM table (separator row with `|---` or `| ---`) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+    // Table header row: at least one line with two `|` chars and non-pipe
+    // content between them. The separator pin already establishes presence;
+    // this ensures the body row is also there (so `mountEditor` sees a real
+    // 2+ row table when rendering).
+    assert!(
+        md.lines().filter(|l| l.matches('|').count() >= 2).count() >= 3,
+        "expected fixture to contain a GFM table with at least 3 pipe-bearing lines (header + separator + body) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Link: `[...](...)` — pin the literal pattern.
+    assert!(
+        md.contains("](http"),
+        "expected fixture to contain a Markdown link (e.g. `[text](https://...)`) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Image: `![...](...)` — pin the literal pattern.
+    assert!(
+        md.contains("!["),
+        "expected fixture to contain a Markdown image (e.g. `![alt](https://...)`) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+    assert!(
+        md.contains("![") && md.contains("](http"),
+        "expected fixture image to point at an absolute URL (e.g. `![alt](https://...)`) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Blockquote: a line beginning `> `.
+    assert!(
+        md.contains("\n> ") || md.starts_with("> "),
+        "expected fixture to contain a blockquote (line starting with `> `) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Bold: `**text**` — pin the literal `**` token (must appear at least twice
+    // for an opening + closing pair).
+    assert!(
+        md.matches("**").count() >= 2,
+        "expected fixture to contain bold (`**text**`, requires opening + closing `**`) for Issue #3 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // Italic: literal `*italic*` or `_italic_`. We pin a specific sequence
+    // (`*italic*`) so a false positive from a list bullet `* ` cannot satisfy
+    // the contract.
+    let has_italic = md.contains("*italic*") || md.contains("_italic_");
+    assert!(
+        has_italic,
+        "expected fixture to contain italic emphasis (literal `*italic*` or `_italic_`) for Issue #3 AC #1 — pinning the exact word so a list-bullet `* ` does not falsely satisfy the assertion; fixture was:\n{}",
+        md,
+    );
+
+    // Horizontal rule: a line consisting solely of `---` (or longer). Pin
+    // the line-anchored form to avoid table-separator false positives
+    // (`|---|`).
+    let has_hr = md
+        .lines()
+        .any(|l| {
+            let t = l.trim();
+            !t.is_empty()
+                && t.chars().all(|c| c == '-')
+                && t.len() >= 3
+        })
+        || md
+            .lines()
+            .any(|l| {
+                let t = l.trim();
+                !t.is_empty()
+                    && t.chars().all(|c| c == '*')
+                    && t.len() >= 3
+            });
+    assert!(
+        has_hr,
+        "expected fixture to contain a horizontal rule (a line of `---` or `***`, NOT a table separator) for Issue #3 AC #1; fixture was:\n{}",
+        md,
     );
 }
 

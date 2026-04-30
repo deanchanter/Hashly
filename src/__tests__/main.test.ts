@@ -98,6 +98,25 @@ describe('mountEditor', () => {
     ).toEqual(['hello', 'hello-1', 'hello-2']);
   });
 
+  it('renders a GFM table from the @milkdown/preset-gfm pipeline (#3)', async () => {
+    // Issue #3 AC #2: tables are GFM, NOT CommonMark. With only
+    // @milkdown/preset-commonmark, the pipe-delimited rows would render as
+    // plain text. This smoke test pins the gfm preset's wiring by mounting a
+    // minimal table fixture and asserting the rendered DOM contains a real
+    // <table> with header + body cells. If `gfm` is dropped from
+    // mountEditor's plugin chain, this test fails with a clear "no <table>"
+    // signal rather than the silent regression of seeing pipes-as-text.
+    const md = '| Risk | Likelihood |\n|------|------------|\n| A    | High       |\n| B    | Low        |';
+    await mountEditor(host, md);
+
+    const table = host.querySelector('table');
+    expect(table, 'expected a <table> rendered from the GFM table fixture (Issue #3 AC #2)').not.toBeNull();
+    const headerCells = table!.querySelectorAll('thead th, tr:first-child th');
+    expect(headerCells.length, 'expected 2 header cells in the GFM table').toBeGreaterThanOrEqual(2);
+    const dataRows = table!.querySelectorAll('tbody tr');
+    expect(dataRows.length, 'expected 2 data rows in the GFM table').toBeGreaterThanOrEqual(2);
+  });
+
   it('exposes the .ProseMirror root as a tab stop (tabindex="0") so keyboard users can scroll the read-only doc', async () => {
     // Issue #15 AC #2: `contenteditable="false"` removes the implicit tab-stop
     // that ProseMirror would otherwise inherit from `contenteditable="true"`.
