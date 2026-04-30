@@ -67,6 +67,111 @@ fn frontend_main_ts_imports_milkdown_core_and_commonmark() {
 }
 
 #[test]
+fn package_json_declares_vitest_dev_dependency() {
+    // Issue #18 AC #1: Vitest must be added as a devDependency so the harness
+    // is reproducible on a fresh `npm install`. This test pins the contract
+    // independent of whether `node_modules/` happens to be populated locally.
+    let raw = read_repo_file("package.json");
+    let pkg: serde_json::Value =
+        serde_json::from_str(&raw).expect("package.json is not valid JSON");
+
+    let dev_deps = pkg
+        .get("devDependencies")
+        .and_then(|d| d.as_object())
+        .expect("expected `devDependencies` object in package.json");
+
+    let vitest = dev_deps.get("vitest").unwrap_or_else(|| {
+        panic!(
+            "expected devDependencies[\"vitest\"] in package.json (Issue #18 AC #1); got devDependencies = {:?}",
+            dev_deps
+        )
+    });
+    assert!(
+        vitest.is_string(),
+        "expected devDependencies[\"vitest\"] to be a version string, got: {:?}",
+        vitest
+    );
+}
+
+#[test]
+fn package_json_declares_jsdom_dev_dependency() {
+    // Issue #18 AC #1: jsdom is the picked DOM environment for Vitest
+    // (Milkdown's ProseMirror baseline needs full DOM APIs that happy-dom
+    // historically gaps on). Pin it so the choice is contractual, not implicit.
+    let raw = read_repo_file("package.json");
+    let pkg: serde_json::Value =
+        serde_json::from_str(&raw).expect("package.json is not valid JSON");
+
+    let dev_deps = pkg
+        .get("devDependencies")
+        .and_then(|d| d.as_object())
+        .expect("expected `devDependencies` object in package.json");
+
+    let jsdom = dev_deps.get("jsdom").unwrap_or_else(|| {
+        panic!(
+            "expected devDependencies[\"jsdom\"] in package.json (Issue #18 AC #1); got devDependencies = {:?}",
+            dev_deps
+        )
+    });
+    assert!(
+        jsdom.is_string(),
+        "expected devDependencies[\"jsdom\"] to be a version string, got: {:?}",
+        jsdom
+    );
+}
+
+#[test]
+fn package_json_test_script_invokes_vitest() {
+    // Issue #18 AC #2: `npm test` must run Vitest. The script must invoke
+    // `vitest` (typically `vitest run` for one-shot CI-friendly mode); the
+    // test asserts the binary name appears in the script value.
+    let raw = read_repo_file("package.json");
+    let pkg: serde_json::Value =
+        serde_json::from_str(&raw).expect("package.json is not valid JSON");
+
+    let scripts = pkg
+        .get("scripts")
+        .and_then(|s| s.as_object())
+        .expect("expected `scripts` object in package.json");
+
+    let test_script = scripts.get("test").and_then(|v| v.as_str()).unwrap_or_else(|| {
+        panic!(
+            "expected scripts[\"test\"] string in package.json so `npm test` is wired (Issue #18 AC #2); got scripts = {:?}",
+            scripts
+        )
+    });
+
+    assert!(
+        test_script.contains("vitest"),
+        "expected scripts[\"test\"] to invoke `vitest` (e.g. `vitest run`), got: {:?}",
+        test_script
+    );
+}
+
+#[test]
+fn vitest_config_ts_exists_at_repo_root() {
+    // Issue #18 AC #1: a checked-in `vitest.config.ts` is part of the
+    // contract — it pins the test environment (jsdom), the include glob
+    // (so `src/__tests__/*.test.ts` is discovered), and any setup files.
+    // Existence + jsdom mention is asserted; details are exercised by
+    // `npm test` itself.
+    let path = repo_root().join("vitest.config.ts");
+    assert!(
+        path.exists(),
+        "expected `vitest.config.ts` at repo root (Issue #18 AC #1), but {} does not exist",
+        path.display()
+    );
+
+    let cfg = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
+    assert!(
+        cfg.contains("jsdom"),
+        "expected `vitest.config.ts` to configure the `jsdom` test environment (Issue #18 AC #1), got:\n{}",
+        cfg
+    );
+}
+
+#[test]
 fn package_json_declares_milkdown_dependencies() {
     // AC #1 + #2: the JS toolkit declares Milkdown so `npm install` actually pulls it in.
     let raw = read_repo_file("package.json");
