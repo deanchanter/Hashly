@@ -890,6 +890,182 @@ fn fixture_malformed_showcase_exists_and_covers_required_pathologies() {
 }
 
 #[test]
+fn frontend_main_ts_imports_listen_from_tauri_apps_api_event() {
+    // Issue #4 slice D: the frontend must subscribe to the
+    // `menu-open-file` event emitted by the Rust menu handler (slice C)
+    // via Tauri's event API. The canonical import is:
+    //
+    //     import { listen } from '@tauri-apps/api/event';
+    //
+    // Without this import, the menu emits an event no one is listening
+    // for and File>Open silently does nothing in the rendered window.
+    //
+    // Comments are stripped first so a commented-out import (e.g.
+    // `// import { listen } from '@tauri-apps/api/event'`) does NOT
+    // satisfy the assertion. Both quote styles for the package path
+    // are accepted (TypeScript permits either).
+    let main_ts = read_repo_file("src/main.ts");
+    let stripped = common::strip_comments(&main_ts);
+
+    let has_single = stripped.contains("from '@tauri-apps/api/event'");
+    let has_double = stripped.contains("from \"@tauri-apps/api/event\"");
+    assert!(
+        has_single || has_double,
+        "expected src/main.ts to import from `@tauri-apps/api/event` (Issue #4 slice D — \
+         required to subscribe to the `menu-open-file` event emitted by the Rust menu \
+         handler in slice C). After comment-strip:\n{}",
+        stripped
+    );
+
+    // The `listen` symbol must specifically appear in the import. We
+    // accept either a named-import form (`import { listen } from …`)
+    // or a destructure-after-namespace-import form
+    // (`import * as event from …; const { listen } = event;`). The
+    // simpler check: the substring `listen` must appear within ~120
+    // chars of the @tauri-apps/api/event import statement.
+    let import_idx = stripped
+        .find("'@tauri-apps/api/event'")
+        .or_else(|| stripped.find("\"@tauri-apps/api/event\""))
+        .expect("import path was found above; should also be findable here");
+    let window_start = import_idx.saturating_sub(200);
+    let window_end = (import_idx + 200).min(stripped.len());
+    let window = &stripped[window_start..window_end];
+    assert!(
+        window.contains("listen"),
+        "expected `listen` to appear in or adjacent to the `@tauri-apps/api/event` \
+         import (Issue #4 slice D). Window around the import was:\n{}",
+        window
+    );
+}
+
+#[test]
+fn frontend_main_ts_exports_handle_file_opened_and_open_file_via_dialog() {
+    // Issue #4 slice D: `handleFileOpened` is the helper that takes a
+    // `FileOpened` payload and applies it to the DOM (re-mount + title).
+    // `openFileViaDialog` is the orchestrator that opens the native
+    // dialog plugin, calls `read_md_file` over IPC, and hands the
+    // result to `handleFileOpened`. Both must be named exports so:
+    //   - The Vitest test can drive `handleFileOpened` directly without
+    //     mocking the Tauri runtime.
+    //   - The `listen('menu-open-file', …)` callback in `bootstrap()`
+    //     can call `openFileViaDialog` cleanly.
+    //
+    // We accept the three TypeScript-permitted forms: function
+    // declaration, async function declaration, and const-assigned
+    // expression — same set as the existing `bootstrap` export check.
+    let main_ts = read_repo_file("src/main.ts");
+    let stripped = common::strip_comments(&main_ts);
+
+    let has_handle = stripped.contains("export function handleFileOpened")
+        || stripped.contains("export async function handleFileOpened")
+        || stripped.contains("export const handleFileOpened");
+    assert!(
+        has_handle,
+        "expected src/main.ts to expose a named `handleFileOpened` export — \
+         `export function handleFileOpened`, `export async function handleFileOpened`, \
+         or `export const handleFileOpened` (Issue #4 slice D). After comment-strip:\n{}",
+        stripped
+    );
+
+    let has_dialog_opener = stripped.contains("export function openFileViaDialog")
+        || stripped.contains("export async function openFileViaDialog")
+        || stripped.contains("export const openFileViaDialog");
+    assert!(
+        has_dialog_opener,
+        "expected src/main.ts to expose a named `openFileViaDialog` export — \
+         `export function openFileViaDialog`, `export async function openFileViaDialog`, \
+         or `export const openFileViaDialog` (Issue #4 slice D). After comment-strip:\n{}",
+        stripped
+    );
+}
+
+#[test]
+fn frontend_main_ts_assigns_to_document_title() {
+    // Issue #4 slice D: the file-open path must update `document.title`
+    // so the user sees which file is loaded. Without an active
+    // assignment, the title stays at its `<title>Hashly</title>`
+    // default and the user has no visual indication of state changes.
+    //
+    // Accepted forms (whitespace-insensitive, post-comment-strip):
+    //   - `document.title = …`
+    //   - `document.title=…`  (rare but legal)
+    //
+    // We do NOT accept reading `document.title` (e.g. `const t =
+    // document.title`) — only assignments. The check anchors on the
+    // `=` after `document.title` (whitespace-stripped) so a read is
+    // rejected.
+    let main_ts = read_repo_file("src/main.ts");
+    let stripped = common::strip_comments(&main_ts);
+    let normalized: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
+
+    // After whitespace-strip, an assignment becomes `document.title=…`.
+    // A read becomes `document.title;` or `=document.title`. Pin the
+    // assignment-side form: `document.title=` followed by a non-`=`
+    // char (so we don't false-positive on `==` or `===` comparisons).
+    let assignment_idx = normalized.find("document.title=");
+    let is_assignment = match assignment_idx {
+        Some(i) => {
+            let next = normalized.as_bytes().get(i + "document.title=".len());
+            // Reject `==` (would be `document.title==…`) or `===`.
+            !matches!(next, Some(b'='))
+        }
+        None => false,
+    };
+
+    assert!(
+        is_assignment,
+        "expected src/main.ts to ASSIGN to `document.title` (Issue #4 slice D — \
+         not just read it; the user-visible window title must update so File>Open \
+         has visible feedback). After comment-strip and whitespace-strip:\n{}",
+        normalized
+    );
+}
+
+#[test]
+fn package_json_declares_tauri_apps_api_and_plugin_dialog_runtime_deps() {
+    // Issue #4 slice D: `@tauri-apps/api` provides the `listen` /
+    // `invoke` runtime; `@tauri-apps/plugin-dialog` is the JS half of
+    // the dialog plugin registered in slice C. Both MUST be declared
+    // in `dependencies` (not `devDependencies`) so production bundles
+    // include them.
+    let raw = read_repo_file("package.json");
+    let pkg: serde_json::Value =
+        serde_json::from_str(&raw).expect("package.json is not valid JSON");
+
+    let deps = pkg
+        .get("dependencies")
+        .and_then(|d| d.as_object())
+        .expect("expected `dependencies` object in package.json");
+
+    let api = deps.get("@tauri-apps/api").unwrap_or_else(|| {
+        panic!(
+            "expected dependencies[\"@tauri-apps/api\"] in package.json (Issue #4 slice D — \
+             provides the runtime `listen`/`invoke` calls); current dependencies = {:?}",
+            deps
+        )
+    });
+    assert!(
+        api.is_string(),
+        "expected dependencies[\"@tauri-apps/api\"] to be a version string, got: {:?}",
+        api
+    );
+
+    let dialog = deps.get("@tauri-apps/plugin-dialog").unwrap_or_else(|| {
+        panic!(
+            "expected dependencies[\"@tauri-apps/plugin-dialog\"] in package.json (Issue #4 \
+             slice D — JS half of the dialog plugin registered on the Rust side in slice C); \
+             current dependencies = {:?}",
+            deps
+        )
+    });
+    assert!(
+        dialog.is_string(),
+        "expected dependencies[\"@tauri-apps/plugin-dialog\"] to be a version string, got: {:?}",
+        dialog
+    );
+}
+
+#[test]
 fn frontend_main_ts_sets_tabindex_0_on_editor_root() {
     // Issue #15 AC #2: `contenteditable="false"` strips the implicit tab-stop
     // that ProseMirror would otherwise have. Without `tabindex="0"` on the

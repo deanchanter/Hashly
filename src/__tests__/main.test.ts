@@ -194,6 +194,139 @@ describe('mountEditor', () => {
   });
 });
 
+describe('Issue #4 — handleFileOpened (Tauri-event-driven file open)', () => {
+  // Background: when the user picks a markdown file via File>Open, slice C
+  // emits the `menu-open-file` Tauri event and the frontend opens the
+  // dialog plugin → invokes `read_md_file` over IPC → receives a
+  // `FileOpened` payload. `handleFileOpened` is the helper that takes that
+  // payload and:
+  //   1. Replaces the editor content (re-mounts Milkdown with the new
+  //      `content`).
+  //   2. Updates `document.title` to include the file `name`.
+  //
+  // We test the helper in isolation — the `listen('menu-open-file', …)`
+  // wiring is exercised via static-contract assertions in
+  // `src-tauri/tests/frontend.rs` (we cannot reach the real
+  // `@tauri-apps/api/event` listener under jsdom without spinning up a
+  // mock Tauri runtime, which would test the mock more than the helper).
+  //
+  // The helper signature is `handleFileOpened(payload, host)` — taking an
+  // explicit host element makes the test deterministic (no DOM-querying
+  // global state).
+
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    host.id = 'editor';
+    document.body.appendChild(host);
+    // Reset title between tests so we can assert on a clean slate.
+    document.title = 'Hashly';
+  });
+
+  it('replaces the editor content with the payload markdown — `# New Spec` renders as <h1>', async () => {
+    // RED until `handleFileOpened` exists as a named export. We import
+    // it directly rather than via `bootstrap()` so the test exercises
+    // the contract surface (the payload→DOM transform), independent
+    // of the IPC plumbing.
+    const { handleFileOpened } = (await import('../main')) as unknown as {
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+
+    expect(
+      typeof handleFileOpened,
+      'expected `handleFileOpened` to be a named export of src/main.ts (Issue #4 slice D)',
+    ).toBe('function');
+
+    await handleFileOpened(
+      { path: '/tmp/spec.md', name: 'spec.md', content: '# New Spec\n\nbody' },
+      host,
+    );
+
+    // Real-behavior assertion (not a tautology): the payload's `# New Spec`
+    // must reach the DOM as a real `<h1>` so a regression that drops the
+    // re-mount step or feeds the wrong field would fail loudly.
+    const h1 = host.querySelector('h1');
+    expect(
+      h1,
+      'expected an <h1> rendered inside the host after handleFileOpened (Issue #4 slice D — the editor view must be replaced with the payload content)',
+    ).not.toBeNull();
+    expect(h1?.textContent ?? '').toContain('New Spec');
+  });
+
+  it('updates document.title to include the file name from the payload', async () => {
+    // RED until handleFileOpened mutates document.title. We assert
+    // `toContain('spec.md')` rather than full-string equality so the
+    // implementation has freedom to choose the title format
+    // (`spec.md — Hashly`, `Hashly — spec.md`, `spec.md`, etc.). What
+    // we DO pin is that the file name is present — without that, the
+    // user has no visual indication that the open succeeded or which
+    // file is loaded.
+    const { handleFileOpened } = (await import('../main')) as unknown as {
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+
+    await handleFileOpened(
+      { path: '/tmp/spec.md', name: 'spec.md', content: '# New Spec' },
+      host,
+    );
+
+    expect(
+      document.title,
+      `expected document.title to include the file name "spec.md" (Issue #4 slice D — without the title update, the user has no visual indication of which file is loaded). Got: ${JSON.stringify(document.title)}`,
+    ).toContain('spec.md');
+  });
+
+  it('replaces (not appends to) prior editor content when called twice with different payloads', async () => {
+    // Important contract: a second open must REPLACE the first, not
+    // stack a second editor on top of the first. Without this, an
+    // unsuspecting user could open File A, then File B, and end up
+    // viewing both concatenated — a silent data-confusion bug. We
+    // assert the second `<h1>` is the only `<h1>` and contains the
+    // SECOND payload's heading text.
+    const { handleFileOpened } = (await import('../main')) as unknown as {
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+
+    await handleFileOpened(
+      { path: '/tmp/first.md', name: 'first.md', content: '# First Doc' },
+      host,
+    );
+    await handleFileOpened(
+      { path: '/tmp/second.md', name: 'second.md', content: '# Second Doc' },
+      host,
+    );
+
+    const h1s = host.querySelectorAll('h1');
+    expect(
+      h1s.length,
+      `expected exactly one <h1> after two handleFileOpened calls (Issue #4 slice D — the second open must replace, not append). Got ${h1s.length} <h1> elements.`,
+    ).toBe(1);
+    expect(h1s[0]?.textContent ?? '').toContain('Second Doc');
+    expect(h1s[0]?.textContent ?? '').not.toContain('First Doc');
+
+    // Title must reflect the SECOND file, not the first.
+    expect(
+      document.title,
+      `expected document.title to reflect the second file ("second.md") after the second open call. Got: ${JSON.stringify(document.title)}`,
+    ).toContain('second.md');
+    expect(
+      document.title,
+      `expected document.title to NOT still contain the first file's name after replacement.`,
+    ).not.toContain('first.md');
+  });
+});
+
 describe('Issue #16 — installDragDropGuard (window-level dragover/drop preventDefault)', () => {
   // Background: ProseMirror only `preventDefault`s drag events when the editor
   // is editable. In our read-only mode (`editable: () => false`) it leaves

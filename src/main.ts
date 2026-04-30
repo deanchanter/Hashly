@@ -4,6 +4,9 @@ import { gfm } from '@milkdown/preset-gfm';
 import '@milkdown/prose/view/style/prosemirror.css';
 import './style.css';
 import showcase from './fixtures/commonmark-showcase.md?raw';
+import { listen } from '@tauri-apps/api/event';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 
 export async function mountEditor(host: HTMLElement, content: string): Promise<Editor> {
   return Editor.make()
@@ -49,9 +52,37 @@ export function installDragDropGuard(target: Window | Document = window): void {
   target.addEventListener('drop', stop);
 }
 
+export interface FileOpened {
+  path: string;
+  name: string;
+  content: string;
+}
+
+export async function handleFileOpened(payload: FileOpened, host: HTMLElement): Promise<void> {
+  host.innerHTML = '';
+  document.title = `${payload.name} — Hashly`;
+  await mountEditor(host, payload.content);
+}
+
+export async function openFileViaDialog(host: HTMLElement): Promise<void> {
+  const selected = await openDialog({
+    multiple: false,
+    filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+  });
+  if (!selected || Array.isArray(selected)) return;
+  const payload = await invoke<FileOpened>('read_md_file', { path: selected });
+  await handleFileOpened(payload, host);
+}
+
 export function bootstrap(): void {
   if (typeof document === 'undefined') return;
   installDragDropGuard();
+  void listen<void>('menu-open-file', () => {
+    const editorHost = document.getElementById('editor');
+    if (editorHost) {
+      void openFileViaDialog(editorHost);
+    }
+  }).catch(() => { /* listen rejects in non-Tauri envs (e.g. plain browser / vitest) — acceptable */ });
   const host = document.getElementById('editor');
   if (!host) {
     console.warn('[hashly] #editor host element not found; mountEditor not auto-invoked');
