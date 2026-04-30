@@ -559,3 +559,75 @@ fn ci_workflow_rust_job_uses_swatinem_rust_cache() {
         steps(&job)
     );
 }
+
+// =====================================================================
+// Fix-loop — adversarial-review critical #1 (AC #3 hardening):
+// Tauri v2's build script unconditionally runs `pkg-config --exists
+// webkit2gtk-4.1 javascriptcoregtk-4.1` on Linux. The `ubuntu-latest`
+// runner does NOT come with libwebkit2gtk-4.1-dev (or the rest of the
+// Tauri Linux prerequisite set) preinstalled, so `cargo test --workspace`
+// will fail at build/link time. Without an apt-get install step ahead of
+// `cargo test`, the cargo job is non-functional — defeating the entire
+// point of #20. Pin the install as a contractual step.
+// =====================================================================
+
+#[test]
+fn ci_workflow_rust_job_installs_tauri_linux_system_deps() {
+    // The contract: in the cargo job, BEFORE the step that runs `cargo test`,
+    // there must exist a `run:` step whose script text mentions
+    // `libwebkit2gtk-4.1-dev`. We assert just that single package name (rather
+    // than the full Tauri prerequisite list) because:
+    //   1. webkit2gtk is the canonical Tauri-Linux indicator — no Tauri build
+    //      can succeed without it.
+    //   2. Pinning every package name would make the test brittle against
+    //      legitimate edits (e.g. adding `pkg-config` or splitting deps across
+    //      multiple `run:` steps).
+    // The "before" ordering matters: an apt-get step that runs AFTER cargo
+    // test is useless. We find the index of the cargo-test step and require
+    // an earlier run-step to carry the webkit2gtk dep.
+    let cfg = load_workflow();
+    let (job_name, job) = find_rust_job(&cfg);
+    let job_steps = steps(&job);
+
+    // Find the index of the step that runs `cargo test ...`. Reuse the same
+    // tolerant matcher Slice C uses (handles `cargo test --workspace`,
+    // `cargo test --all`, and bare `cargo test` followed by a delimiter).
+    fn step_runs_cargo_test(step: &serde_yaml::Mapping) -> bool {
+        let s = match step
+            .get(serde_yaml::Value::String("run".into()))
+            .and_then(|v| v.as_str())
+        {
+            Some(s) => s,
+            None => return false,
+        };
+        if s.contains("cargo test --workspace") || s.contains("cargo test --all") {
+            return true;
+        }
+        s.split(|c: char| c.is_whitespace() || c == '&' || c == ';' || c == '|')
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|w| w[0] == "cargo" && w[1] == "test")
+    }
+
+    let cargo_test_idx = job_steps
+        .iter()
+        .position(step_runs_cargo_test)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected job `{}` to have a step that runs `cargo test ...` (this is also asserted by ci_workflow_rust_job_runs_cargo_test_workspace, Issue #20 AC #3), got steps: {:?}",
+                job_name, job_steps
+            )
+        });
+
+    // Look at every run-step strictly BEFORE cargo_test_idx and check whether
+    // any of them mentions `libwebkit2gtk-4.1-dev`.
+    let has_webkit_install_before_cargo_test = job_steps[..cargo_test_idx]
+        .iter()
+        .any(|step| step_run_contains(step, "libwebkit2gtk-4.1-dev"));
+
+    assert!(
+        has_webkit_install_before_cargo_test,
+        "expected job `{}` to install Tauri's Linux system dependencies (specifically `libwebkit2gtk-4.1-dev`) in a `run:` step BEFORE the `cargo test` step (Issue #20 AC #3 hardening — Tauri v2 build script runs `pkg-config --exists webkit2gtk-4.1` on Linux and ubuntu-latest does not preinstall it). Got steps before cargo-test (index {}): {:?}",
+        job_name, cargo_test_idx, &job_steps[..cargo_test_idx]
+    );
+}
