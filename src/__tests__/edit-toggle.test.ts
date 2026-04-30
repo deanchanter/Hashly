@@ -667,3 +667,116 @@ describe('Issue #6 AC #4 — toggling back to read mode preserves in-memory edit
     expect(host.querySelector('h1')?.textContent ?? '').toContain('Hello!');
   });
 });
+
+// =============================================================================
+// FIX-LOOP TESTS — reviewer findings (C1–C7) on top of the AC #1–#4 baseline.
+// =============================================================================
+
+// C1 — Button reflects mode (label + aria-pressed).
+//
+// The reviewer noted: a toggle that visibly says "Edit" while the user is
+// ALREADY in edit mode is a UX confusion (and an accessibility bug — a
+// screen reader will announce the wrong action). The contract pinned here:
+//   - Initial / read mode: `aria-pressed="false"` AND the textContent
+//     identifies "Edit" as the next action.
+//   - Edit mode: `aria-pressed="true"` AND textContent has CHANGED from
+//     the read-mode label (we don't pin the exact string — "Read",
+//     "View", "Done" are all defensible — but it must differ).
+//   - Toggling back: both attributes return to their initial values.
+// Folded-in: the `aria-readonly` attribute on the .ProseMirror root must
+// flip alongside `contenteditable` (security non-critical: an inert
+// `aria-readonly="true"` in edit mode would cause screen readers to
+// silently mis-announce). Pinned in the same describe because it's the
+// same toggle event.
+
+describe('Issue #6 fix-loop C1 — toggle button reflects mode (aria-pressed + textContent)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '<div id="editor"></div>';
+    document.title = 'Hashly';
+  });
+
+  it('initial state: aria-pressed="false" and a non-empty textContent (read-mode label)', async () => {
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]');
+    expect(toggle, 'precondition: toggle button must exist').not.toBeNull();
+    expect(
+      toggle!.getAttribute('aria-pressed'),
+      'expected aria-pressed="false" on initial mount (read mode is the unpressed/inactive state of the toggle — required so screen readers announce the correct toggle state; Issue #6 fix-loop C1).',
+    ).toBe('false');
+    expect(
+      (toggle!.textContent ?? '').trim().length,
+      'expected the toggle to have non-empty textContent so users can identify its action (Issue #6 fix-loop C1).',
+    ).toBeGreaterThan(0);
+  });
+
+  it('after one click (entering edit mode): aria-pressed="true", textContent has changed, and .ProseMirror has aria-readonly="false"', async () => {
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const editor = document.getElementById('editor')!;
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    const initialLabel = (toggle.textContent ?? '').trim();
+    expect(
+      initialLabel.length,
+      'precondition: the initial label must be non-empty so the change-on-click assertion is meaningful',
+    ).toBeGreaterThan(0);
+
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(
+      toggle.getAttribute('aria-pressed'),
+      'expected aria-pressed="true" after click (edit mode is the pressed/active state of the toggle; Issue #6 fix-loop C1).',
+    ).toBe('true');
+
+    const editLabel = (toggle.textContent ?? '').trim();
+    expect(
+      editLabel,
+      `expected the toggle textContent to CHANGE after entering edit mode (read-mode label was ${JSON.stringify(initialLabel)}, but it remained the same after click — users cannot tell what the next action is). Pin via change-on-click rather than a specific string so the builder can pick "Read" / "View" / "Done" freely. Issue #6 fix-loop C1.`,
+    ).not.toBe(initialLabel);
+
+    // Folded-in non-critical: aria-readonly must flip alongside
+    // contenteditable. Without this, screen readers announce read-only
+    // even though the user is now editing.
+    const pm = editor.querySelector<HTMLElement>('.ProseMirror');
+    expect(pm, 'precondition: .ProseMirror must remain in DOM after toggle').not.toBeNull();
+    expect(
+      pm!.getAttribute('aria-readonly'),
+      'expected aria-readonly="false" on the .ProseMirror root in edit mode (folded-in security non-critical: the a11y state must agree with contenteditable; Issue #6 fix-loop C1 + non-critical S4).',
+    ).toBe('false');
+  });
+
+  it('after two clicks (returning to read mode): aria-pressed flips back to "false" and textContent restores', async () => {
+    const { bootstrap } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+    };
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    const initialLabel = (toggle.textContent ?? '').trim();
+
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(
+      toggle.getAttribute('aria-pressed'),
+      'expected aria-pressed="false" after returning to read mode — the toggle state is symmetric (Issue #6 fix-loop C1).',
+    ).toBe('false');
+    expect(
+      (toggle.textContent ?? '').trim(),
+      'expected the textContent to restore to the initial read-mode label after returning to read mode (Issue #6 fix-loop C1 — the toggle must not get stuck in the "edit" label after exiting edit mode).',
+    ).toBe(initialLabel);
+  });
+});
