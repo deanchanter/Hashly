@@ -14,3 +14,7 @@ body {
 .ProseMirror {
   cursor: default;
 }
+
+.ProseMirror[contenteditable="true"] {
+  cursor: text;
+}
