@@ -120,6 +120,17 @@ async function toggleEditMode(): Promise<void> {
     currentEditorMode = nextMode;
     currentEditorHost = host;
     syncEditToggleUi();
+    if (nextMode === 'edit') {
+      next.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        view.focus();
+      });
+    } else if (editToggleButton) {
+      // Re-enable BEFORE focus — jsdom (per HTML spec) refuses to focus
+      // a disabled element. The `finally` block re-enables idempotently.
+      editToggleButton.disabled = false;
+      editToggleButton.focus();
+    }
   } finally {
     toggleInFlight = false;
     if (editToggleButton) editToggleButton.disabled = false;
