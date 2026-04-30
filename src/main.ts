@@ -1,4 +1,11 @@
-import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from '@milkdown/core';
+import {
+  Editor,
+  rootCtx,
+  defaultValueCtx,
+  editorViewOptionsCtx,
+  editorViewCtx,
+  serializerCtx,
+} from '@milkdown/core';
 import { commonmark, headingIdGenerator } from '@milkdown/preset-commonmark';
 import { gfm } from '@milkdown/preset-gfm';
 import '@milkdown/prose/view/style/prosemirror.css';
@@ -8,16 +15,30 @@ import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 
-export async function mountEditor(host: HTMLElement, content: string): Promise<Editor> {
+export type EditorMode = 'read' | 'edit';
+
+export async function mountEditor(
+  host: HTMLElement,
+  content: string,
+  mode: EditorMode = 'read',
+): Promise<Editor> {
   return Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, host);
       ctx.set(defaultValueCtx, content);
-      ctx.update(editorViewOptionsCtx, (prev) => ({
-        ...prev,
-        editable: () => false,
-        attributes: { 'aria-readonly': 'true', 'tabindex': '0' },
-      }));
+      ctx.update(editorViewOptionsCtx, (prev) =>
+        mode === 'edit'
+          ? {
+              ...prev,
+              editable: () => true,
+              attributes: { 'aria-readonly': 'false', 'tabindex': '0' },
+            }
+          : {
+              ...prev,
+              editable: () => false,
+              attributes: { 'aria-readonly': 'true', 'tabindex': '0' },
+            },
+      );
       const seenHeadingIds = new Map<string, number>();
       const nodeIdCache = new WeakMap<object, string>();
       ctx.set(headingIdGenerator.key, (node) => {
@@ -58,10 +79,62 @@ export interface FileOpened {
   content: string;
 }
 
+let currentEditor: Editor | null = null;
+let currentEditorMode: EditorMode = 'read';
+let currentEditorHost: HTMLElement | null = null;
+
+async function toggleEditMode(): Promise<void> {
+  const editor = currentEditor;
+  const host = currentEditorHost;
+  if (!editor || !host) return;
+  let md: string;
+  try {
+    md = editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const serializer = ctx.get(serializerCtx);
+      return serializer(view.state.doc);
+    });
+  } catch {
+    return;
+  }
+  const nextMode: EditorMode = currentEditorMode === 'read' ? 'edit' : 'read';
+  try {
+    await editor.destroy();
+  } catch {
+    /* swallow — destroy may reject if the editor was already torn down */
+  }
+  currentEditor = null;
+  host.innerHTML = '';
+  const next = await mountEditor(host, md, nextMode);
+  currentEditor = next;
+  currentEditorMode = nextMode;
+  currentEditorHost = host;
+}
+
+let editToggleInstalled = false;
+
+function installEditToggle(): void {
+  if (editToggleInstalled) return;
+  if (typeof document === 'undefined') return;
+  editToggleInstalled = true;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.setAttribute('data-testid', 'edit-toggle');
+  button.className = 'hashly-edit-toggle';
+  button.textContent = 'Edit';
+  button.addEventListener('click', () => {
+    void toggleEditMode();
+  });
+  document.body.appendChild(button);
+}
+
 export async function handleFileOpened(payload: FileOpened, host: HTMLElement): Promise<void> {
   host.innerHTML = '';
   document.title = `${payload.name} — Hashly`;
-  await mountEditor(host, payload.content);
+  const editor = await mountEditor(host, payload.content);
+  currentEditor = editor;
+  currentEditorMode = 'read';
+  currentEditorHost = host;
 }
 
 export async function openFileViaDialog(host: HTMLElement): Promise<void> {
@@ -100,6 +173,7 @@ export function renderFileError(host: HTMLElement, message: string, path?: strin
 export function bootstrap(): void {
   if (typeof document === 'undefined') return;
   installDragDropGuard();
+  installEditToggle();
   void listen<void>('menu-open-file', () => {
     const editorHost = document.getElementById('editor');
     if (editorHost) {
@@ -111,7 +185,11 @@ export function bootstrap(): void {
     console.warn('[hashly] #editor host element not found; mountEditor not auto-invoked');
     return;
   }
-  void mountEditor(host, showcase);
+  void mountEditor(host, showcase).then((editor) => {
+    currentEditor = editor;
+    currentEditorMode = 'read';
+    currentEditorHost = host;
+  });
 }
 
 if (import.meta.env.MODE !== 'test') {
