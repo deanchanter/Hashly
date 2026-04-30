@@ -65,4 +65,27 @@ describe('mountEditor', () => {
     expect(peditable, 'expected an element with a contenteditable attribute').not.toBeNull();
     expect(peditable?.getAttribute('contenteditable')).toBe('false');
   });
+
+  it('exposes the .ProseMirror root as a tab stop (tabindex="0") so keyboard users can scroll the read-only doc', async () => {
+    // Issue #15 AC #2: `contenteditable="false"` removes the implicit tab-stop
+    // that ProseMirror would otherwise inherit from `contenteditable="true"`.
+    // Without an explicit `tabindex`, keyboard-only users (and Tab navigation
+    // generally) can't focus the doc, which breaks Space / PgDn / arrow-key
+    // scrolling of the read-only content. The fix is to set `tabindex="0"`
+    // via Milkdown's `editorViewOptionsCtx → EditorProps.attributes`.
+    //
+    // We pin the value verbatim ("0", not e.g. "-1") because `-1` would make
+    // the element programmatically focusable but NOT reachable by Tab — that
+    // would silently fail the keyboard-scroll requirement while still putting
+    // a tabindex attribute on the root. We pin both class and attribute on
+    // the same element (matching the aria-readonly pattern at issue #21) so
+    // a future regression that puts tabindex on a wrapper is caught.
+    await mountEditor(host, '# Hello');
+
+    const tabbableRoot = host.querySelector<HTMLElement>('.ProseMirror[tabindex="0"]');
+    expect(
+      tabbableRoot,
+      'expected the .ProseMirror root to carry tabindex="0" (Issue #15 AC #2) so keyboard-only users can Tab to the read-only doc and use Space/PgDn/arrow keys to scroll. tabindex="-1" is NOT acceptable — it makes the element programmatically focusable but unreachable via Tab.',
+    ).not.toBeNull();
+  });
 });

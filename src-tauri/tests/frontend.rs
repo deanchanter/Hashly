@@ -443,3 +443,37 @@ fn frontend_main_ts_sets_aria_readonly_on_editor_root() {
         stripped
     );
 }
+
+#[test]
+fn frontend_main_ts_sets_tabindex_0_on_editor_root() {
+    // Issue #15 AC #2: `contenteditable="false"` strips the implicit tab-stop
+    // that ProseMirror would otherwise have. Without `tabindex="0"` on the
+    // editor root, keyboard users can't Tab to the read-only doc — which
+    // breaks Space/PgDn/arrow-key scrolling. The fix is to extend the
+    // `attributes` object on `editorViewOptionsCtx`'s `EditorProps` so the
+    // ProseMirror root DOM node carries `tabindex="0"`.
+    //
+    // We pin the VALUE verbatim ("0") because "-1" makes the element
+    // programmatically focusable but NOT Tab-reachable — that would silently
+    // fail the keyboard-scroll requirement while passing a more lenient
+    // "tabindex attribute exists" check. The dynamic vitest test in
+    // src/__tests__/main.test.ts asserts the rendered DOM; this static-
+    // contract test catches a contributor who tries to ship `tabindex: '-1'`
+    // or drops the line entirely, even when vitest is unavailable in CI.
+    //
+    // Comments are stripped first (matching the aria-readonly defense
+    // pattern above) so a commented-out `'tabindex': '0'` ghost cannot
+    // satisfy the assertion.
+    let main_ts = read_repo_file("src/main.ts");
+    let stripped = common::strip_comments(&main_ts);
+    let normalized: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
+
+    let has_single = normalized.contains("'tabindex':'0'");
+    let has_double = normalized.contains("\"tabindex\":\"0\"");
+
+    assert!(
+        has_single || has_double,
+        "expected src/main.ts to set `tabindex: '0'` on the editor root (via editorViewOptionsCtx → EditorProps.attributes) so keyboard-only users can Tab to the read-only doc and scroll it (Issue #15 AC #2). `tabindex: '-1'` is NOT acceptable — it makes the element programmatically focusable but unreachable via Tab. After comment-strip:\n{}",
+        stripped
+    );
+}
