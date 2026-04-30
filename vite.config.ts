@@ -5,6 +5,10 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
   clearScreen: false,
+  build: {
+    target: 'safari15',
+    sourcemap: true,
+  },
   server: {
     port: 1420,
     strictPort: true,
@@ -21,7 +25,4 @@ export default defineConfig(async () => ({
     },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_*'],
-  build: {
-    target: 'safari15',
-  },
 }));
