@@ -131,3 +131,35 @@ Critical fixed: 0
 Non-critical filed: 0
 Process note: qa-tdd added static contract test only; team-lead added the dynamic Vitest smoke test for AC #2/#3 (mount-without-throw + no console.error). Builder created the fixture. Both agents idled without committing.
 Reviewer status: team-lead substituted.
+
+### #4 — File > Open menu + CSP
+
+Sliced into 4 atomic commits:
+- `846d4a7 feat(#4): set restrictive CSP in tauri.conf.json (slice A)`
+- `5a88e23 feat(#4): add read_md_file core + FileOpened struct (slice B)`
+- `eac0161 feat(#4): wire dialog plugin + File > Open menu + IPC command (slice C)`
+- `d2422e1 feat(#4): handleFileOpened + dialog listener + title update (slice D)`
+
+Architecture:
+- CSP set to: `default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost`. script-src deliberately excludes 'unsafe-inline'.
+- Rust `read_md_file(path) -> Result<FileOpened, String>` reads UTF-8; rejects non-UTF-8 with Err (returns lossless content). #[tauri::command] registered via invoke_handler.
+- Tauri menu: File > Open... (id="open", accelerator="CmdOrCtrl+O") wired in .setup(). On click emits "menu-open-file" event.
+- Frontend: bootstrap() subscribes to "menu-open-file" → calls openFileViaDialog → @tauri-apps/plugin-dialog returns selected path → invoke('read_md_file', {path}) → handleFileOpened(payload, host) re-mounts editor + sets document.title.
+
+New deps:
+- Rust: tauri-plugin-dialog ^2 (runtime), tempfile ^3 (dev).
+- npm: @tauri-apps/api ^2, @tauri-apps/plugin-dialog ^2.
+
+Tests: cargo grew from ~48 to ~61 (lib.rs +3 read_md_file unit tests, tests/menu.rs +5 menu/plugin contracts, tests/config.rs +1 CSP contract, tests/frontend.rs +4 main.ts contracts). npm 16→19 (+3 dynamic handleFileOpened tests).
+
+Critical fixed: 0
+Non-critical filed: 0
+Process note: 4-slice flow worked well — qa-tdd drove the sequence, builder applied each slice, team-lead committed each green. Builder still doesn't commit, qa-tdd still doesn't always SendMessage builder (slice B and slice D required a manual ping). But the slicing kept the iterations small and recoverable.
+
+macOS-runtime caveats explicitly out of scope (per ship-milestone decision):
+- native macOS menu visibility / Cmd+O keybinding behavior
+- native file picker dialog appearance
+- <1s render performance
+User will verify these manually post-PR.
+
+Reviewer status: team-lead substituted. Considered the security model: CSP locks script execution, raw HTML in markdown is escaped by commonmark preset (#14 regression pin), file path is passed Rust→frontend→Rust IPC (no shell injection vector since plugin-dialog returns the OS-level path verbatim and read_md_file calls fs::read_to_string with no shell). No concerns.
