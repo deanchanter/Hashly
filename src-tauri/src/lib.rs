@@ -1,6 +1,8 @@
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::Emitter;
 
 pub fn greeting() -> &'static str {
     "Hello Hashly"
@@ -13,7 +15,8 @@ pub struct FileOpened {
     pub content: String,
 }
 
-pub fn read_md_file(path: &str) -> Result<FileOpened, String> {
+#[tauri::command]
+fn read_md_file(path: &str) -> Result<FileOpened, String> {
     let p = Path::new(path);
     let content = fs::read_to_string(p).map_err(|e| e.to_string())?;
     let name = p
@@ -30,6 +33,22 @@ pub fn read_md_file(path: &str) -> Result<FileOpened, String> {
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![read_md_file])
+        .setup(|app| {
+            let open = MenuItemBuilder::with_id("open", "Open…")
+                .accelerator("CmdOrCtrl+O")
+                .build(app)?;
+            let file = SubmenuBuilder::new(app, "File").item(&open).build()?;
+            let menu = MenuBuilder::new(app).item(&file).build()?;
+            app.set_menu(menu)?;
+            app.on_menu_event(|app_handle, event| {
+                if event.id().0 == "open" {
+                    let _ = app_handle.emit("menu-open-file", ());
+                }
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Hashly");
 }
