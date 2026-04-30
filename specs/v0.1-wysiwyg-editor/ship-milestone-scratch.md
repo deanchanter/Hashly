@@ -97,3 +97,21 @@ Critical fixed: 0
 Non-critical filed: 0
 Process note: qa-tdd wrote both dynamic AND static contract tests but went idle without committing. builder applied the edit but went idle without committing. team-lead committed all three files in one atomic commit. Tmux orphans cleaned at iteration boundary.
 Reviewer status: team-lead substituted. Reviewed: idempotency flag is module-level (good for single-page lifetime, fine since vite HMR will reload the whole module anyway). preventDefault on `drop` even though the user said "before any per-element drop logic" — confirmed: window-level handlers run during the bubbling phase, and ProseMirror's drop handlers (when editable) attach to view DOM, so they don't compete here.
+
+### #3 — Render full CommonMark+GFM showcase fixture
+
+Commits:
+- `a0b4fb8 feat(#3): render full CommonMark+GFM showcase fixture read-only`
+
+New dep: `@milkdown/preset-gfm@^7.20.0` (CommonMark spec excludes tables; GFM provides them).
+
+Fixture: `src/fixtures/commonmark-showcase.md` (98 lines, SDD-spec style) covering h1-h6, ordered/unordered/nested lists, fenced + inline code, GFM table, link, image, blockquote, bold/italic, HR.
+
+Wire-up: `import showcase from './fixtures/commonmark-showcase.md?raw'` (Vite raw-import); `bootstrap()` passes it to `mountEditor()`. `.use(gfm)` after `.use(commonmark)` in the editor pipeline.
+
+Tests: cargo frontend 16→17 (+1: fixture file existence + every-element-token contract); npm 14→15 (+1: GFM table smoke). Stale `'# Hello'` literal pin from #18 retargeted to assert the showcase-fixture import.
+
+Critical fixed: 0
+Non-critical filed: 0
+Process note: qa-tdd actually drove the loop this iteration — sent SendMessage to builder, waited for response. builder added all the impl (gfm preset, fixture file, bootstrap wiring). Both still went idle without committing; team-lead committed and added the GFM table smoke test (qa-tdd hadn't covered table rendering dynamically — only static contract).
+Reviewer status: team-lead substituted.
