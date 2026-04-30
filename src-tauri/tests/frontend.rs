@@ -746,6 +746,150 @@ fn fixture_commonmark_showcase_exists_and_covers_all_required_elements() {
 }
 
 #[test]
+fn fixture_malformed_showcase_exists_and_covers_required_pathologies() {
+    // Issue #11 AC #1 — A test fixture of malformed markdown must be bundled
+    // in the repo. Milkdown's CommonMark + GFM presets already handle most
+    // malformed input gracefully; this fixture is the contract that pins
+    // *which* pathologies we test the read-only renderer against. The
+    // dynamic vitest test in `src/__tests__/main.test.ts` mounts this same
+    // class of input and asserts the editor doesn't crash.
+    //
+    // Pathology mix pinned here (a subset of the pathologies enumerated in
+    // the issue body — these are the ones a substring-token contract can
+    // sanely assert without re-implementing a markdown parser):
+    //
+    //   - Unclosed fenced code block: a ``` fence with no matching close
+    //     anywhere later in the file. Many parsers crash or hang on this
+    //     so it's a high-value test input.
+    //   - Broken GFM table: a header row whose separator row has fewer
+    //     columns than the header. Pinned as the substring `| a | b |\n|---|`
+    //     (or analogous) — a separator with strictly fewer pipe-delimited
+    //     cells than the header above it.
+    //   - Raw HTML mixed in: at minimum a `<div` token. Milkdown's
+    //     commonmark preset escapes raw HTML by default, so this should
+    //     appear as text; pinning the substring guarantees the fixture
+    //     actually exercises that escape path.
+    //   - Deeply nested list (10+ levels). Pinned by the deepest indent
+    //     line containing 18+ leading spaces (i.e. level 10 at 2-space
+    //     indents) followed by a `- ` bullet.
+    //
+    // We keep the contract at substring-tokens (not parsing) because the
+    // whole point of the fixture is to be malformed — running it through
+    // a parser to verify it would defeat the purpose.
+    let path = repo_root().join("src/fixtures/malformed-showcase.md");
+    assert!(
+        path.exists(),
+        "expected fixture `src/fixtures/malformed-showcase.md` to exist (Issue #11 AC #1), but {} does not exist",
+        path.display()
+    );
+
+    let md = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("could not read {}: {}", path.display(), e));
+
+    assert!(
+        !md.trim().is_empty(),
+        "expected fixture `src/fixtures/malformed-showcase.md` to be NON-EMPTY (Issue #11 AC #1); got an empty / whitespace-only file",
+    );
+
+    // --- Unclosed fenced code block ---
+    // Count occurrences of triple-backtick. An unclosed fence means an ODD
+    // total — a closed fence pair contributes 2. We require the count to
+    // be ≥ 1 AND odd, which is the strictest way to assert "at least one
+    // fence has no closing match" using a substring-only check.
+    let fence_count = md.matches("```").count();
+    assert!(
+        fence_count >= 1,
+        "expected fixture to contain at least one ``` fence (Issue #11 AC #1 — unclosed fenced code block pathology); fixture was:\n{}",
+        md,
+    );
+    assert!(
+        fence_count % 2 == 1,
+        "expected fixture to contain an UNCLOSED ``` fence — the total count of ``` runs must be ODD so at least one fence has no closing match (Issue #11 AC #1). Got {} fence runs in:\n{}",
+        fence_count,
+        md,
+    );
+
+    // --- Broken GFM table: separator with fewer cells than header ---
+    // Walk the file line by line. For each line that looks like a
+    // separator (contains `|` and `---`), find the immediately-preceding
+    // non-blank line that ALSO contains `|` (the header) and assert the
+    // header has MORE pipe-bounded cells than the separator. We only need
+    // to find ONE such broken pair anywhere in the file.
+    fn pipe_cell_count(line: &str) -> usize {
+        // A line like `| a | b |` has 3 pipes → 2 cells. A line like
+        // `|---|` has 2 pipes → 1 cell. We approximate "cell count" as
+        // (pipe count - 1), clamped at 0, which matches GFM's convention
+        // that leading and trailing pipes are optional but typically
+        // present in the cases we care about.
+        let p = line.matches('|').count();
+        if p == 0 {
+            0
+        } else {
+            p.saturating_sub(1)
+        }
+    }
+    let lines: Vec<&str> = md.lines().collect();
+    let mut found_broken_table = false;
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if !trimmed.contains('|') || !trimmed.contains("---") {
+            continue;
+        }
+        // This is a separator candidate. Find the previous non-blank line.
+        let mut j = i;
+        while j > 0 {
+            j -= 1;
+            let prev = lines[j].trim();
+            if prev.is_empty() {
+                continue;
+            }
+            if !prev.contains('|') {
+                break;
+            }
+            let header_cells = pipe_cell_count(prev);
+            let sep_cells = pipe_cell_count(trimmed);
+            if header_cells > sep_cells && header_cells >= 2 {
+                found_broken_table = true;
+            }
+            break;
+        }
+        if found_broken_table {
+            break;
+        }
+    }
+    assert!(
+        found_broken_table,
+        "expected fixture to contain a BROKEN GFM table — a header row with N≥2 cells followed by a separator row with strictly fewer cells (e.g. `| a | b |\\n|---|`) for Issue #11 AC #1; fixture was:\n{}",
+        md,
+    );
+
+    // --- Raw HTML mixed in ---
+    assert!(
+        md.contains("<div"),
+        "expected fixture to contain raw HTML (e.g. a `<div` tag) so the renderer's HTML-escape path is exercised (Issue #11 AC #1); fixture was:\n{}",
+        md,
+    );
+
+    // --- Deeply nested list (10+ levels) ---
+    // Level 10 at 2-space indents = 18 leading spaces before the bullet.
+    // Accept either `- ` or `* ` bullets. Walk lines and assert at least
+    // one bullet line has ≥ 18 leading spaces.
+    let has_deeply_nested = md.lines().any(|l| {
+        let leading_spaces = l.chars().take_while(|c| *c == ' ').count();
+        if leading_spaces < 18 {
+            return false;
+        }
+        let after_indent = &l[leading_spaces..];
+        after_indent.starts_with("- ") || after_indent.starts_with("* ")
+    });
+    assert!(
+        has_deeply_nested,
+        "expected fixture to contain a DEEPLY NESTED list item — a `- ` or `* ` bullet preceded by ≥ 18 leading spaces (i.e. ≥ 10 levels at 2-space indents) for Issue #11 AC #1; fixture was:\n{}",
+        md,
+    );
+}
+
+#[test]
 fn frontend_main_ts_sets_tabindex_0_on_editor_root() {
     // Issue #15 AC #2: `contenteditable="false"` strips the implicit tab-stop
     // that ProseMirror would otherwise have. Without `tabindex="0"` on the

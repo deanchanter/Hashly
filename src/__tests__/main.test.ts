@@ -98,6 +98,59 @@ describe('mountEditor', () => {
     ).toEqual(['hello', 'hello-1', 'hello-2']);
   });
 
+  it('mounts the malformed-markdown fixture without throwing (#11)', async () => {
+    // Issue #11 ACs: pathological markdown must render best-effort —
+    // partial output is acceptable, but the editor must NOT crash and
+    // must not log unhandled exceptions to console.error during the
+    // mount.
+    //
+    // The fixture covers: unclosed fenced code blocks, broken tables
+    // (column-count mismatch), raw HTML (commonmark preset escapes by
+    // default — see #14 regression pin), 10-level nested lists,
+    // unmatched emphasis, malformed links, mixed Unicode/RTL/zero-width
+    // joiners. Inlining a representative subset rather than reading the
+    // file via `?raw` keeps the test self-contained and the failure
+    // mode obvious.
+    const malformed = [
+      '# Malformed',
+      '',
+      '```js',
+      'const x = 1; // unclosed fence',
+      '',
+      '| a | b |',
+      '|---|',
+      '| c |',
+      '',
+      '<div onclick="alert(1)">raw HTML — must be escaped</div>',
+      '',
+      '- one',
+      '  - two',
+      '    - three',
+      '      - four',
+      '',
+      '**bold without close',
+      '[link without close paren(',
+      '',
+      'Mixed: שלום ✨ مرحبا — control: ​‌‍',
+    ].join('\n');
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await expect(mountEditor(host, malformed)).resolves.not.toThrow();
+      expect(
+        host.querySelector('.ProseMirror'),
+        'expected .ProseMirror node to exist after mounting malformed input — partial render is acceptable but the editor must mount',
+      ).not.toBeNull();
+      expect(
+        errSpy,
+        `expected NO console.error during malformed-fixture mount (Issue #11 AC #3 — no unhandled exceptions). Calls: ${JSON.stringify(errSpy.mock.calls)}`,
+      ).not.toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
   it('renders a GFM table from the @milkdown/preset-gfm pipeline (#3)', async () => {
     // Issue #3 AC #2: tables are GFM, NOT CommonMark. With only
     // @milkdown/preset-commonmark, the pipe-delimited rows would render as
