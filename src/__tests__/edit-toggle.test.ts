@@ -448,3 +448,222 @@ describe('Issue #6 AC #3 — in edit mode, user can type and the doc updates in-
     ).toContain('Hello!');
   });
 });
+
+// Issue #6 AC #4: Switching back to read mode preserves the in-memory
+// edits (does not discard them or reload from disk).
+//
+// This is the round-trip / data-loss test. The implementation choice for
+// edit mode is "destroy + re-mount with new mode" (AC #1's slice), and
+// AC #4 is the assertion that round-tripping through that destroy+mount
+// preserves user edits via Milkdown's `serializerCtx`. A regression that
+// re-mounts using the ORIGINAL `payload.content` instead of the live
+// markdown would silently delete the user's typing on toggle-back —
+// arguably the worst possible UX bug for a "just made a quick edit" flow.
+//
+// We exercise THREE round-trip patterns:
+//   1. Type a single character, toggle back: the character is preserved.
+//   2. Type, toggle back to read, toggle to edit again: the edits are
+//      still there at the second edit-mode entry (proves no "reload from
+//      disk" on either toggle direction).
+//   3. After preserving edits across one round-trip, the toggle in the
+//      now-restored read view STILL works — this catches the regression
+//      where preserving the markdown breaks the toggle's editor reference.
+
+describe('Issue #6 AC #4 — toggling back to read mode preserves in-memory edits', () => {
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    host.id = 'editor';
+    document.body.appendChild(host);
+    document.title = 'Hashly';
+  });
+
+  it('typed character is preserved after toggling edit → read (single round-trip)', async () => {
+    const { handleFileOpened, bootstrap, getCurrentEditor } = (await import('../main')) as unknown as {
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+      bootstrap: () => void;
+      getCurrentEditor: () => Editor | null;
+    };
+
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await handleFileOpened(
+      { path: '/tmp/h.md', name: 'h.md', content: '# Hello' },
+      host,
+    );
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+
+    // Enter edit mode.
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(
+      host.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'precondition: must be in edit mode before typing',
+    ).toBe('true');
+
+    // Type "!" at end of H1.
+    const editorEdit = getCurrentEditor()!;
+    editorEdit.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const endOfFirstNode = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('!', endOfFirstNode));
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(
+      host.querySelector('h1')?.textContent ?? '',
+      'precondition: the edit must take effect in edit mode (otherwise this is testing AC #3 not AC #4)',
+    ).toContain('Hello!');
+
+    // Toggle back to read mode.
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(
+      host.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'precondition: a second toggle click must return to read mode',
+    ).toBe('false');
+
+    // The edited character must still be present in the DOM. Without
+    // serializer-based round-tripping, this would revert to "Hello" — i.e.
+    // the original payload.content — discarding the user's edit.
+    const h1 = host.querySelector('h1');
+    expect(
+      h1,
+      'expected an <h1> in the read-mode DOM after toggle-back',
+    ).not.toBeNull();
+    expect(
+      h1!.textContent ?? '',
+      'expected the in-memory edit ("Hello!") to survive the read-mode toggle (Issue #6 AC #4 — the worst possible regression here is silently losing user edits; pin it hard).',
+    ).toContain('Hello!');
+    // Negative pin: the original "Hello" without "!" must NOT be the only
+    // content — guards against an impl that re-mounts with payload.content.
+    expect(
+      h1!.textContent ?? '',
+      'expected the H1 to NOT have reverted to the original "Hello" without the inserted "!" (Issue #6 AC #4 — this is the data-loss regression we are pinning).',
+    ).not.toMatch(/^Hello\s*$/);
+  });
+
+  it('edits persist across a full edit→read→edit round-trip (no "reload from disk" on either direction)', async () => {
+    // This sharpens the AC: AC #4 says "switching BACK to read mode
+    // preserves edits". The natural follow-up question — and a plausible
+    // regression class — is whether the NEXT toggle (read→edit) would
+    // reload from the original payload.content. We pin it by entering
+    // edit a SECOND time after the first round-trip and asserting the
+    // edit is still there.
+    const { handleFileOpened, bootstrap, getCurrentEditor } = (await import('../main')) as unknown as {
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+      bootstrap: () => void;
+      getCurrentEditor: () => Editor | null;
+    };
+
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await handleFileOpened(
+      { path: '/tmp/h.md', name: 'h.md', content: '# Hello' },
+      host,
+    );
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+
+    // Round 1: toggle to edit, type, toggle back.
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    getCurrentEditor()!.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const endOfFirstNode = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('!', endOfFirstNode));
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(
+      host.querySelector('h1')?.textContent ?? '',
+      'precondition: round 1 must end in read mode showing "Hello!"',
+    ).toContain('Hello!');
+
+    // Round 2: toggle to edit AGAIN.
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(
+      host.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'precondition: a third toggle click must re-enter edit mode',
+    ).toBe('true');
+
+    expect(
+      host.querySelector('h1')?.textContent ?? '',
+      'expected the second edit-mode entry to STILL show "Hello!" (Issue #6 AC #4 — the toggle must NEVER reload from `payload.content`; the live in-memory doc is the source of truth on every toggle).',
+    ).toContain('Hello!');
+  });
+
+  it('after a preserve-then-toggle-back round-trip, the toggle still works (no stale editor reference)', async () => {
+    // After serializing-and-re-mounting, the module-scoped currentEditor
+    // points at a NEW Editor instance. The toggle's click handler must
+    // continue to dispatch against the live editor on subsequent clicks
+    // (i.e. it can't have captured the original editor reference in a
+    // closure). This test pins that contract by exercising 3 toggles in
+    // a row after a single edit, asserting we end up in the expected
+    // mode after each.
+    const { handleFileOpened, bootstrap, getCurrentEditor } = (await import('../main')) as unknown as {
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+      bootstrap: () => void;
+      getCurrentEditor: () => Editor | null;
+    };
+
+    bootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await handleFileOpened(
+      { path: '/tmp/h.md', name: 'h.md', content: '# Hello' },
+      host,
+    );
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    const pmAttr = () =>
+      host.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable');
+
+    // → edit
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(pmAttr(), 'click 1: edit').toBe('true');
+
+    // type
+    getCurrentEditor()!.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const endOfFirstNode = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('!', endOfFirstNode));
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // → read (with edits)
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(pmAttr(), 'click 2: read (with edits preserved)').toBe('false');
+    expect(host.querySelector('h1')?.textContent ?? '').toContain('Hello!');
+
+    // → edit (no stale reference; must re-enter edit mode)
+    toggle.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(
+      pmAttr(),
+      'click 3: edit again — without rebinding to the new editor instance after the previous round-trip, this click would no-op or throw (Issue #6 AC #4 implication).',
+    ).toBe('true');
+    expect(host.querySelector('h1')?.textContent ?? '').toContain('Hello!');
+  });
+});
