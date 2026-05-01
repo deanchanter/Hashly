@@ -238,3 +238,38 @@ User re-fired Ralph with `finish ship milestone v0.1`. State read from git + gh 
 - `specs/hashly-vision.md`: No edits — phase sketch is descriptive, not tickable; v0.1 partial ship doesn't materially update the vision.
 
 Commit: `chore: close out v0.1-wysiwyg-editor`.
+
+**B2 — PR opened:** https://github.com/deanchanter/Hashly/pull/42 (base `main`, head `milestone/v0.1-wysiwyg-editor`).
+
+**B3 — Final cross-slice adversarial review:** ran one `adversarial-reviewer` agent over `main..milestone/v0.1-wysiwyg-editor`. Surfaced 2 `[critical]` + 4 `[non-critical]`. Critical findings fixed in commit `20ef68a`:
+
+1. *Missing Tauri 2 capability ACL.* No `src-tauri/capabilities/` existed; runtime ACL would have denied `@tauri-apps/plugin-dialog` + IPC at runtime, silently breaking #4's File > Open AC under `cargo tauri dev`. Tests passed because Rust suites bypass IPC and Vitest mocks the `@tauri-apps` modules. Fix: added `src-tauri/capabilities/default.json` (`core:default` + `dialog:default` for the `main` window) + `tests/capabilities.rs` pin (2 tests). `cargo build` accepts schema. **Major catch — would have failed host smoke.**
+
+2. *spec.md AC #1 status overstatement.* Compound AC ("Finder OR File > Open … in <1s") ticked despite Finder half being deferred (#5) and <1s being a manual host-only check that hasn't been performed. Fix: unticked AC #1 with explicit prose; corrected status header to clarify #18 already on `main` via PR #23.
+
+Non-critical follow-ups filed:
+- #43 — Sanitize document.title against Unicode RTL / zero-width chars
+- #44 — read_md_file path traversal hardening before #5/#7 land
+
+Two non-criticals from the final review NOT filed (already covered by existing follow-ups or fixed in this commit):
+- #14 misattribution in tasks.md — fixed inline (line 69 reworded to remove "raw HTML escaping" credit).
+- spec.md / tasks.md "#18 shipped via this PR" overstatement — fixed in 20ef68a along with AC #1.
+- toggle stale state if `mountEditor` rejects mid-toggle — already filed as #36.
+- `cargo test` doesn't exercise IPC permission boundary — partially addressed by the new `tests/capabilities.rs`; an end-to-end runtime ACL test is overkill for v0.1 (filing would be gilding).
+
+**B4 — Final report:**
+
+| | |
+|---|---|
+| Milestone PR | https://github.com/deanchanter/Hashly/pull/42 |
+| Issues shipped (closed by PR) | 14 — #3, #4, #6, #10, #11, #14, #15, #16, #17, #20, #21, #22, #24, #25 |
+| Issues already on main (not closed by PR) | 1 — #18 (PR #23) |
+| Issues skipped/deferred | 5 — #5, #7, #8, #9, #12 (per user instruction) |
+| Follow-ups filed during run | 18 — #26 (#10) + #27–#34 (#6 first pass) + #35–#41 (#6 second pass) + #43, #44 (final review) |
+| Cross-slice review | 2 `[critical]` (both fixed in `20ef68a`), 4 `[non-critical]` (2 filed + 2 inline-fixed/duplicate) |
+| `cargo test --workspace` | green (~64 tests across 12 integration suites) |
+| `npm test` | green (52/52 across 4 files) |
+| `cargo build` (schema validation) | green |
+| Manual verification left for user | macOS host-only — File > Open native picker + Cmd+O dispatch; <1s render; no console errors after open+edit+toggle; keyboard/SR a11y of the toggle button; capability ACL honored at runtime |
+
+**B5 — Promise emitted.** Milestone PR is open, all critical findings (per-slice + final cross-slice) resolved, deferred follow-ups filed, doc/status reconciled. Emitting `MILESTONE_SHIPPED` to terminate the Ralph loop.
