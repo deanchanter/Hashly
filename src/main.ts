@@ -9,6 +9,8 @@ import {
 import { commonmark, headingIdGenerator } from '@milkdown/preset-commonmark';
 import { gfm } from '@milkdown/preset-gfm';
 import '@milkdown/prose/view/style/prosemirror.css';
+import type { EditorView } from '@milkdown/prose/view';
+import type { Transaction } from '@milkdown/prose/state';
 import './style.css';
 import showcase from './fixtures/commonmark-showcase.md?raw';
 import { listen } from '@tauri-apps/api/event';
@@ -22,7 +24,14 @@ export async function mountEditor(
   content: string,
   mode: EditorMode = 'read',
 ): Promise<Editor> {
-  return Editor.make()
+  // Per-mount arming flag for dirty tracking. The dispatchTransaction
+  // wrapper closes over this so transactions Milkdown/ProseMirror fire
+  // during initial setup (before the mount is "settled") cannot flip
+  // dirty. We arm it on the next macrotask after `.create()` resolves —
+  // by then the plugin lifecycle has played out and any further
+  // docChanged transaction is user-driven.
+  const armRef = { armed: false };
+  const editor = await Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, host);
       ctx.set(defaultValueCtx, content);
@@ -32,6 +41,18 @@ export async function mountEditor(
               ...prev,
               editable: () => true,
               attributes: { 'aria-readonly': 'false', 'tabindex': '0' },
+              // Issue #7 / #33: install dirty-tracking dispatchTransaction
+              // wrapper ONLY in edit mode. Read-mode mounts get NO wrapper,
+              // so a programmatic `view.dispatch(tr)` (which ProseMirror
+              // does not block even when `editable: () => false`) cannot
+              // signal dirty — first defensive layer against the #33
+              // write-handle bypass.
+              dispatchTransaction(this: EditorView, tr: Transaction) {
+                this.updateState(this.state.apply(tr));
+                if (armRef.armed && tr.docChanged) {
+                  markDirty();
+                }
+              },
             }
           : {
               ...prev,
@@ -59,6 +80,16 @@ export async function mountEditor(
     .use(commonmark)
     .use(gfm)
     .create();
+  if (mode === 'edit') {
+    // Arm on the next macrotask. Mount-time setup transactions resolve
+    // synchronously / in microtasks during `.create()`; a 0-ms timer is
+    // a coarse-but-reliable boundary between "mount setup" and "user
+    // edits".
+    setTimeout(() => {
+      armRef.armed = true;
+    }, 0);
+  }
+  return editor;
 }
 
 let dragDropGuardInstalled = false;
@@ -82,9 +113,36 @@ export interface FileOpened {
 let currentEditor: Editor | null = null;
 let currentEditorMode: EditorMode = 'read';
 let currentEditorHost: HTMLElement | null = null;
+let currentFileName: string | null = null;
 
 export function getCurrentEditor(): Editor | null {
   return currentEditor;
+}
+
+// Issue #7: dirty-bit + title-bullet state. The bit flips true on any
+// edit-mode transaction with `docChanged` (see mountEditor's
+// dispatchTransaction wrapper) and resets to false on file-open.
+let dirty = false;
+
+export function isDirty(): boolean {
+  return dirty;
+}
+
+function syncDirtyUi(): void {
+  if (typeof document === 'undefined') return;
+  const base = currentFileName ? `${currentFileName} — Hashly` : 'Hashly';
+  document.title = dirty ? `• ${base}` : base;
+}
+
+function markDirty(): void {
+  if (dirty) return;
+  dirty = true;
+  syncDirtyUi();
+}
+
+function clearDirty(): void {
+  dirty = false;
+  syncDirtyUi();
 }
 
 let toggleInFlight = false;
@@ -180,7 +238,8 @@ export async function handleFileOpened(payload: FileOpened, host: HTMLElement): 
     }
   }
   host.innerHTML = '';
-  document.title = `${payload.name} — Hashly`;
+  currentFileName = payload.name;
+  clearDirty();
   const editor = await mountEditor(host, payload.content);
   currentEditor = editor;
   currentEditorMode = 'read';
