@@ -220,3 +220,21 @@ Shipped 2026-04-30 to 2026-05-01 (one ship-milestone iteration including a 7-fin
 **Reviewer status:** Both `ux` and `security` agents productive on first pass and re-review (improvement over prior runs where `security` repeatedly idled without findings). qa-tdd drove the fix-loop test cycles cleanly after a brief impl-first ordering on C1/C3 (builder shipped while qa-tdd was waiting). Re-engagement pattern (SendMessage to wake teammate for second pass) worked.
 
 **User instruction (mid-iteration, 2026-04-30):** Stop after #6 ships. Do not pick up #7/#8/#5/#9. Followed; team teardown immediately after this record.
+
+## Phase B finalization — 2026-05-01
+
+User re-fired Ralph with `finish ship milestone v0.1`. State read from git + gh + this scratch. All original-list issues either shipped (#3, #4, #6, #10, #11, #14, #15, #16, #17, #18, #20, #21, #22, #24, #25) or explicitly skipped per user (#5, #7, #8, #9, #12). Milestone PR not yet open → Phase B.
+
+**Pre-flight:**
+- `claude-docker.sh` had a stale Docker preflight warning sitting in working tree across iterations (recorded as deferred under #10's process note). Committed as `chore: warn on under-resourced Docker Desktop in claude-docker.sh` so the milestone branch is clean before doc reconciliation.
+- `cargo test --workspace` — green (~62 tests across all crates/integration suites).
+- `npm test` — green (52 tests, 4 files).
+
+**B1 — Doc reconciliation:**
+- `specs/v0.1-wysiwyg-editor/spec.md`: Status header flipped from "Partially shipped (2026-04-29 — slice #18 only)" → "Partially shipped (2026-05-01 — 15 slices shipped; 5 deferred)". Spec ACs ticked: open-via-menu (File > Open #4), CommonMark renders (#3+#11), read↔edit toggle (#6). Left unticked with deferred-marker: dirty indicator (#7), light/dark (#9).
+- `specs/v0.1-wysiwyg-editor/tasks.md`: Header reset to ship-date 2026-05-01 with shipped/deferred breakdown. ACs ticked for slices 3, 4, 6, 10, 11. Per-slice `Shipped 2026-05-01` notes added with summary of what landed and follow-up references.
+- `CLAUDE.md`: No edits — no stale "planned"/"will land" claims surfaced. `bundle.active = false` note remains accurate (deferred to v0.2 with #12).
+- `README.md`: No edits — README documents dev workflow only, no feature claims.
+- `specs/hashly-vision.md`: No edits — phase sketch is descriptive, not tickable; v0.1 partial ship doesn't materially update the vision.
+
+Commit: `chore: close out v0.1-wysiwyg-editor`.

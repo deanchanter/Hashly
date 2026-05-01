@@ -1,6 +1,6 @@
 # Tasks: Hashly v0.1 — WYSIWYG Markdown Reader
 
-**Partially shipped on 2026-04-29** — only slice 13 (#18, Frontend test harness) shipped via the milestone PR. All other slices remain open for a follow-up run.
+**Shipped on 2026-05-01 (partial)** — slices 3, 4, 6, 10, 11, 13 shipped via the milestone PR alongside backlog hardening (#14, #15, #16, #17, #20, #21, #22, #24, #25). Slices 5, 7, 8, 9, 12 deferred to a follow-up milestone (Read+Edit round-trip + macOS packaging).
 
 Source: [spec.md](./spec.md)
 
@@ -49,24 +49,24 @@ Source: [spec.md](./spec.md)
 **User value:** Confirms Hashly can render the full range of markdown a PM will see in an SDD spec.
 
 **Acceptance criteria:**
-- [ ] A fixture markdown string/file is bundled covering: headings (h1–h6), ordered + unordered + nested lists, fenced code blocks, inline code, tables, links, images, blockquotes, bold/italic, horizontal rules.
-- [ ] All elements render correctly in the read-only Milkdown view.
-- [ ] Visual check passes in both light and dark system appearance (even if theming isn't wired yet — just confirm it doesn't break).
+- [x] A fixture markdown string/file is bundled covering: headings (h1–h6), ordered + unordered + nested lists, fenced code blocks, inline code, tables, links, images, blockquotes, bold/italic, horizontal rules.
+- [x] All elements render correctly in the read-only Milkdown view.
+- [ ] Visual check passes in both light and dark system appearance (even if theming isn't wired yet — just confirm it doesn't break). _(Manual host-only check; light/dark wiring deferred to #9.)_
 
-**Notes:** Depends on #2. Fixture will be reused as a manual smoke test for later slices. **Blocked by follow-up:** "Heading id collisions: commonmark slugger emits duplicates" — fixture must include duplicate heading text and assert unique ids.
+**Notes:** Depends on #2. Fixture will be reused as a manual smoke test for later slices. **Shipped 2026-05-01** — `src/fixtures/commonmark-showcase.md` covers all CommonMark elements; GFM tables added via `@milkdown/preset-gfm`. Heading-id uniqueness fixed via #17 (override `headingIdGenerator.key`). Bundled via `?raw` Vite import.
 
 ### 4. Open a `.md` file via File > Open
 
 **User value:** The PM can open their actual SDD spec from disk via the menu bar.
 
 **Acceptance criteria:**
-- [ ] App has a native macOS menu with **File > Open…** (Cmd+O).
-- [ ] Selecting it shows a native file picker filtered to `.md` files.
-- [ ] Choosing a file replaces the current view with that file's rendered content.
-- [ ] Window title updates to the filename.
-- [ ] Opens in <1s for a typical (<1MB) spec doc.
+- [x] App has a native macOS menu with **File > Open…** (Cmd+O).
+- [x] Selecting it shows a native file picker filtered to `.md` files.
+- [x] Choosing a file replaces the current view with that file's rendered content.
+- [x] Window title updates to the filename.
+- [ ] Opens in <1s for a typical (<1MB) spec doc. _(Manual host-only check.)_
 
-**Notes:** Depends on #3. File reading happens in Rust; pass content to the WebView. **Blocked by follow-ups:** "Set CSP on Tauri WebView before #4 lands" (security — arbitrary markdown rendering needs CSP set first) and "ProseMirror dragover bypass surfaces if Tauri dragDropEnabled is flipped" (must install a window-level dragover guard before any HTML5 drag-drop work).
+**Notes:** Depends on #3. File reading happens in Rust; pass content to the WebView. **Shipped 2026-05-01** in 4 slices — A: CSP locked down (`script-src 'self'`); B: `read_md_file` Rust core with non-UTF-8 rejection; C: `tauri-plugin-dialog` + File > Open menu (Cmd+O); D: frontend `handleFileOpened` + dialog listener + title update. CSP and dragover blockers resolved via #14 (raw HTML escaping) and #16 (window-level dragover guard) prior to landing.
 
 ### 5. Open a `.md` file via Finder double-click
 
@@ -84,12 +84,12 @@ Source: [spec.md](./spec.md)
 **User value:** The PM can switch into an editable WYSIWYG view to make a clarification or correction, then switch back to reading.
 
 **Acceptance criteria:**
-- [ ] A visible toggle (button or menu item) switches between read-only and editable Milkdown.
-- [ ] Default state on file open is **read-only**.
-- [ ] In edit mode, user can type and the document updates in-memory.
-- [ ] Switching back to read mode preserves the in-memory edits (does not discard them or reload from disk).
+- [x] A visible toggle (button or menu item) switches between read-only and editable Milkdown.
+- [x] Default state on file open is **read-only**.
+- [x] In edit mode, user can type and the document updates in-memory.
+- [x] Switching back to read mode preserves the in-memory edits (does not discard them or reload from disk).
 
-**Notes:** Depends on #4. Edits aren't persisted yet — that's #7.
+**Notes:** Depends on #4. Edits aren't persisted yet — that's #7. **Shipped 2026-05-01** with a 7-finding fix-loop (aria-pressed sync, button placement, edit-mode cursor, disabled+race guard, focus restoration, prior-editor destroy on file open). 15 polish/hardening follow-ups filed (#27–#41) under milestone label, deferred. `getCurrentEditor()` exported as a narrow read-only getter for testability.
 
 ### 7. Dirty indicator + Cmd+S save
 
@@ -133,22 +133,22 @@ Source: [spec.md](./spec.md)
 **User value:** If the PM accidentally opens a corrupt or binary file with a `.md` extension, they see a clear message instead of a crash or garbled output.
 
 **Acceptance criteria:**
-- [ ] Opening a non-UTF-8 file shows a friendly message ("Can't open this file — it doesn't look like text.") in place of rendered content.
-- [ ] App does not crash.
-- [ ] User can dismiss/recover and open another file via File > Open.
+- [x] Opening a non-UTF-8 file shows a friendly message ("Can't open this file — it doesn't look like text.") in place of rendered content.
+- [x] App does not crash.
+- [x] User can dismiss/recover and open another file via File > Open.
 
-**Notes:** Depends on #4. Detect at file-read time in Rust; propagate a typed error to the frontend.
+**Notes:** Depends on #4. Detect at file-read time in Rust; propagate a typed error to the frontend. **Shipped 2026-05-01** — `renderFileError(host, message, path?)` builds `role="alert"` DOM via textContent (XSS-safe). Recovery: subsequent successful open re-mounts the editor. Follow-up #26 differentiates non-UTF-8 vs other invoke failures (currently any IPC error surfaces the same friendly message).
 
 ### 11. Best-effort render for malformed markdown
 
 **User value:** Pathological or weird markdown still opens and renders something — never a crash or blank screen.
 
 **Acceptance criteria:**
-- [ ] A test fixture of malformed markdown (unclosed code fences, broken tables, weird HTML, deeply nested lists) renders without crashing.
-- [ ] Rendering is best-effort — partial output is acceptable.
-- [ ] No unhandled exceptions in the WebView console.
+- [x] A test fixture of malformed markdown (unclosed code fences, broken tables, weird HTML, deeply nested lists) renders without crashing.
+- [x] Rendering is best-effort — partial output is acceptable.
+- [x] No unhandled exceptions in the WebView console.
 
-**Notes:** Depends on #3. Mostly relies on Milkdown's resilience; this slice is about *verifying* and adding fixtures, not building a parser.
+**Notes:** Depends on #3. Mostly relies on Milkdown's resilience; this slice is about *verifying* and adding fixtures, not building a parser. **Shipped 2026-05-01** — `src/fixtures/malformed-showcase.md` covers unclosed fences, broken table, raw HTML (escaped via #14 contract), 10-level nested lists, unmatched bold/italic, malformed link, mixed Unicode/RTL/ZWJ. No parser changes — Milkdown's commonmark + gfm presets handle malformed input best-effort.
 
 ### 12. Package & ship: `.dmg` GitHub release
 
