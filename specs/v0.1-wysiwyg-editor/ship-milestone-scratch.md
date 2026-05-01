@@ -23,6 +23,8 @@ User decision: ship everything except #12 (.dmg release). User will manually ver
 
 Skipped: #12 (.dmg release) — by user request.
 
+**User request 2026-04-30 mid-#6:** stop after #6 ships. Do NOT pick up #7/#8/#5/#9 in subsequent iterations. If Ralph re-fires after this iteration, surface the pause and exit without a promise; user will `/ralph-loop:cancel-ralph` or resume manually.
+
 ## Per-issue ship log
 
 ### #25 — Converge strip_comments helper
@@ -180,3 +182,41 @@ Non-critical filed: 1
 Reviewer status: security agent spawned and went idle without producing findings (third occurrence in this run). Team-lead did the adversarial pass directly.
 
 Process note: an unrelated edit to `claude-docker.sh` (Docker resource preflight warning) appeared in the working tree mid-iteration; not committed as part of #10 since it's outside scope.
+
+### #6 — Read ↔ Edit toggle (WYSIWYG edit mode)
+
+Shipped 2026-04-30 to 2026-05-01 (one ship-milestone iteration including a 7-finding fix-loop).
+
+**AC commits (test+impl pairs, time order):**
+- `e7d944b feat(#6): edit-toggle button + read↔edit mode swap (slice 1, AC #1)` — builder AC#1+2+4 by construction
+- `866b6cc test(#6): pin edit-toggle button + bidirectional contenteditable swap (AC #1)`
+- `19e9be4 test(#6): pin AC #2 default-on-file-open is read-only (cross-state regression)`
+- `53812b8 feat(#6): export getCurrentEditor read-only getter (slice 2, AC #3)`
+- `eb20b14 test(#6): pin AC #3 in-edit typing updates document in-memory`
+- `7d23aeb test(#6): pin AC #4 in-memory edits survive toggle back to read mode`
+
+**Architecture:** `mountEditor` gained `mode: 'read' | 'edit'` parameter (defaults to `'read'`). `toggleEditMode()` serializes current doc via Milkdown's `serializerCtx`, destroys, re-mounts in opposite mode — content round-trip through the serializer is the AC#4 mechanism. `getCurrentEditor()` exported as a narrow testability surface (single live module-scope reference). `installEditToggle()` adds a `[data-testid="edit-toggle"]` <button> in `bootstrap()` (idempotent flag mirrors `installDragDropGuard`).
+
+**Reviewer pass (first round):** ux delivered 8 [critical] findings, security delivered 4 [critical]. Major overlap on label/state, button placement, and a11y.
+
+**Critical fixes (fix-loop, all test-first):**
+- `08ddc40` + `93e285e` — C1: aria-pressed + textContent sync via `syncEditToggleUi()`
+- `e51fa76` + `6333f4f` — C3: `[contenteditable="true"].ProseMirror { cursor: text }` (specificity 0,0,2,0 vs read mode's 0,0,1,0)
+- `7228720` + `675185c` — C4+C7: synchronous `disabled = true` + `toggleInFlight` flag in try/finally; replaced anti-pattern test
+- `c4c3407` + `8d4e036` — C5: `view.focus()` after edit mount, `button.focus()` after read mount
+- `4dd7116` + `b0770aa` — C6: `await currentEditor.destroy()` at top of `handleFileOpened`
+- `b5e3332` + `acae8c8` — C2: `.hashly-edit-toggle { position: fixed; top/right; z-index: 10 }`
+
+**Reviewer pass (second round):** Both reviewers confirmed **no new [critical] findings**. ~15 non-criticals between them, all triaged to follow-up issues.
+
+**Tests:** npm 24 → 52 (+28 across AC + fix-loop, -1 anti-pattern); cargo unchanged at 36, contracts intact. Builder caught a real Vite 7 / Vitest 4 bug while implementing C3: `import css from '../style.css?raw'` returns empty in jsdom because Vite's CSS plugin strips imports before honoring `?raw`. Workaround: `fs.readFileSync` at test time (matches `src-tauri/tests/frontend.rs` pattern). C2 + C3 contract tests use this approach. Worth flagging in the milestone PR description.
+
+**Critical fixed:** 7 (fix-loop round 1) — all confirmed clean by second-pass reviewers.
+
+**Non-critical filed (15 follow-ups, all under milestone label):**
+- First pass (8): #27 (Tab capture in edit mode), #28 (hit target/scroll/layout polish), #29 (i18n + dark-mode + reduced-motion), #30 (HMR duplicate guard), #31 (bootstrap mount .catch), #32 (Rust pin tighten for default mode), #33 (getCurrentEditor write-bypass — defer to #7 save boundary), #34 (lossy round-trip test gap)
+- Second pass (7): #35 (handleFileOpened symmetry with toggle), #36 (toggle mountEditor rejection stale label), #37 (error-path hardening cross-cutting), #38 (disabled visual + label semantics), #39 (positioning robustness — scrollbar + z-index scale), #40 (sync feedback timing test pin), #41 (aria-readonly cross-state symmetry pin)
+
+**Reviewer status:** Both `ux` and `security` agents productive on first pass and re-review (improvement over prior runs where `security` repeatedly idled without findings). qa-tdd drove the fix-loop test cycles cleanly after a brief impl-first ordering on C1/C3 (builder shipped while qa-tdd was waiting). Re-engagement pattern (SendMessage to wake teammate for second pass) worked.
+
+**User instruction (mid-iteration, 2026-04-30):** Stop after #6 ships. Do not pick up #7/#8/#5/#9. Followed; team teardown immediately after this record.
