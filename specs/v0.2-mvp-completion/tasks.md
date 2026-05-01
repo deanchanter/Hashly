@@ -28,10 +28,10 @@ Sequencing per PRD: deferred-MVP slices first (1–10), wedge layered on top (13
 **User value:** Before save (#7) lands, we know which markdown shapes survive edit↔serialize losslessly and which don't — so #7 ships with a known disposition (fix / flag-out / accept-as-known-limitation) for every lossy form rather than discovering loss in production.
 
 **Acceptance criteria:**
-- [ ] Vitest harness drives a corpus through Milkdown's parse → edit → serialize cycle and asserts AST-equality (not byte-equality) against the source.
-- [ ] Corpus covers (a) the existing CommonMark fixture used by `frontend.rs`, (b) GFM features from `@milkdown/preset-gfm@7.20.0` (tables, task lists, strikethrough), (c) fragile-markdown forms (list-marker normalization `*`↔`-`, code-fence style ` ``` `↔`~~~`, setext→ATX heading collapse, reference→inline link collapse, hard-break `  `↔`\`, emphasis style `*`↔`_`, table-cell padding/alignment), (d) frontmatter cases (no-frontmatter, valid, malformed, frontmatter-only, `---` not at offset 0).
-- [ ] Output is a written report listing each lossy form with a per-case disposition: fix upstream, flag-out, or accept as documented v0.2 known-limitation.
-- [ ] #7 (Save in place) is gated on this report being committed.
+- [x] Vitest harness drives a corpus through Milkdown's parse → edit → serialize cycle and asserts AST-equality (not byte-equality) against the source.
+- [x] Corpus covers (a) the existing CommonMark fixture used by `frontend.rs`, (b) GFM features from `@milkdown/preset-gfm@7.20.0` (tables, task lists, strikethrough), (c) fragile-markdown forms (list-marker normalization `*`↔`-`, code-fence style ` ``` `↔`~~~`, setext→ATX heading collapse, reference→inline link collapse, hard-break `  `↔`\`, emphasis style `*`↔`_`, table-cell padding/alignment), (d) frontmatter cases (no-frontmatter, valid, malformed, frontmatter-only, `---` not at offset 0).
+- [x] Output is a written report listing each lossy form with a per-case disposition: fix upstream, flag-out, or accept as documented v0.2 known-limitation.
+- [x] #7 (Save in place) is gated on this report being committed.
 
 **Notes:** Load-bearing risk #1 in PRD § Risks. AST-equality oracle, not byte-equality. Frontmatter cases must be in the corpus from the start so slice 13 can reuse the same harness.
 
