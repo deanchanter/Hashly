@@ -1,6 +1,6 @@
 # Tasks: Hashly v0.1 — WYSIWYG Markdown Reader
 
-**Shipped on 2026-05-01 (partial)** — slices 3, 4, 6, 10, 11, 13 shipped via the milestone PR alongside backlog hardening (#14, #15, #16, #17, #20, #21, #22, #24, #25). Slices 5, 7, 8, 9, 12 deferred to a follow-up milestone (Read+Edit round-trip + macOS packaging).
+**Shipped on 2026-05-01 (partial)** — slices 3, 4, 6, 10, 11 shipped via the milestone PR alongside backlog hardening (#14, #15, #16, #17, #20, #21, #22, #24, #25). Slice 13 (#18, frontend test harness) already on `main` from PR #23 (2026-04-29), not closed by the milestone PR. Slices 5, 7, 8, 9, 12 deferred to a follow-up milestone (Read+Edit round-trip + macOS packaging).
 
 Source: [spec.md](./spec.md)
 
@@ -66,7 +66,7 @@ Source: [spec.md](./spec.md)
 - [x] Window title updates to the filename.
 - [ ] Opens in <1s for a typical (<1MB) spec doc. _(Manual host-only check.)_
 
-**Notes:** Depends on #3. File reading happens in Rust; pass content to the WebView. **Shipped 2026-05-01** in 4 slices — A: CSP locked down (`script-src 'self'`); B: `read_md_file` Rust core with non-UTF-8 rejection; C: `tauri-plugin-dialog` + File > Open menu (Cmd+O); D: frontend `handleFileOpened` + dialog listener + title update. CSP and dragover blockers resolved via #14 (raw HTML escaping) and #16 (window-level dragover guard) prior to landing.
+**Notes:** Depends on #3. File reading happens in Rust; pass content to the WebView. **Shipped 2026-05-01** in 4 slices — A: CSP locked down (`script-src 'self'`); B: `read_md_file` Rust core with non-UTF-8 rejection; C: `tauri-plugin-dialog` + File > Open menu (Cmd+O); D: frontend `handleFileOpened` + dialog listener + title update. Dragover bypass blocker resolved via #16 (window-level dragover guard) prior to landing. Tauri 2 capability ACL added at finalization (`src-tauri/capabilities/default.json` granting `core:default` + `dialog:default`) so the dialog plugin and IPC are reachable from the webview at runtime — pinned by `tests/capabilities.rs`.
 
 ### 5. Open a `.md` file via Finder double-click
 
