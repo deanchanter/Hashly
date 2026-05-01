@@ -63,10 +63,54 @@ pub fn read_md_file_within(path: &str, allowed_root: &Path) -> Result<FileOpened
     })
 }
 
+#[tauri::command]
+fn save_md_file(path: &str, content: &str) -> Result<(), String> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME environment variable is not set".to_string())?;
+    save_md_file_within(path, content, &home)
+}
+
+// Slice 2 / #7 + #33 + #44: in-place save mirrors the read seam's
+// canonicalize+allow-list+regular-file invariants on the WRITE side.
+// Same threat model as the read path (path-traversal + symlink-following),
+// now with overwrite consequences instead of read consequences. A
+// "simplifying" refactor that drops canonicalize before the write, or
+// reorders the prefix check after the write, silently re-opens this
+// attack surface — and on the write side that means a confused-deputy
+// vector against any user-writable file. Content arrives as `&str` (not
+// a write-capable editor handle), enforcing #33's structural pin: no
+// mutable editor surface ever crosses the IPC boundary. (#7 + #33 + #44.)
+pub fn save_md_file_within(
+    path: &str,
+    content: &str,
+    allowed_root: &Path,
+) -> Result<(), String> {
+    let canonical_path = Path::new(path).canonicalize().map_err(|e| e.to_string())?;
+    let canonical_root = allowed_root.canonicalize().map_err(|e| e.to_string())?;
+
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(format!(
+            "path is outside the allowed root: {}",
+            canonical_path.display()
+        ));
+    }
+
+    let metadata = fs::metadata(&canonical_path).map_err(|e| e.to_string())?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "path is not a regular file: {}",
+            canonical_path.display()
+        ));
+    }
+
+    fs::write(&canonical_path, content).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_md_file])
+        .invoke_handler(tauri::generate_handler![read_md_file, save_md_file])
         .setup(|app| {
             let open = MenuItemBuilder::with_id("open", "Open…")
                 .accelerator("CmdOrCtrl+O")
