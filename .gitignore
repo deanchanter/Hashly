@@ -3,3 +3,7 @@ target/
 src-tauri/gen/
 node_modules/
 dist/
+
+# ship-milestone skill scratch — local-only run log
+specs/**/ship-milestone-scratch.md
+.claude/.ship-milestone.*.scratch.md
