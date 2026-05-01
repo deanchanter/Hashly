@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Hashly — Logo Explorations</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&family=Schibsted+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  :root {
+    --paper: #f0f1ec;
+    --paper-2: #e6e8e0;
+    --ink: #14201b;
+    --ink-2: #36443d;
+    --muted: #7c8479;
+    --rule: #d2d6cb;
+    --accent: #1e3a2f;       /* deep forest */
+    --accent-2: #c9a24b;     /* muted gold */
+    --leaf: #c9a24b;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #e7e9e1;
+    color: var(--ink);
+    font-family: 'Schibsted Grotesk', -apple-system, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* shared frame */
+  .frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: var(--paper);
+    overflow: hidden;
+  }
+  .frame.dark { background: #14201b; color: var(--paper); }
+  .frame.tinted { background: var(--accent); color: var(--paper); }
+  /* subtle paper grain overlay using a noise svg */
+  .paper-grain::before {
+    content: '';
+    position: absolute; inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.12  0 0 0 0 0.10  0 0 0 0 0.08  0 0 0 0.10 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    opacity: 0.55;
+    mix-blend-mode: multiply;
+    pointer-events: none;
+  }
+  .label {
+    position: absolute;
+    left: 18px; bottom: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .label.on-dark { color: rgba(244,239,230,0.55); }
+  .center {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .stack {
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+  }
+  /* corner ticks */
+  .tick {
+    position: absolute;
+    width: 10px; height: 10px;
+    border: 1px solid var(--rule);
+  }
+  .tick.tl { top: 14px; left: 14px; border-right: 0; border-bottom: 0; }
+  .tick.tr { top: 14px; right: 14px; border-left: 0; border-bottom: 0; }
+  .tick.bl { bottom: 14px; left: 14px; border-right: 0; border-top: 0; }
+  .tick.br { bottom: 14px; right: 14px; border-left: 0; border-top: 0; }
+
+  /* wordmark base */
+  .wordmark {
+    font-family: 'Fraunces', 'Times New Roman', serif;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    font-variation-settings: "opsz" 96, "SOFT" 100;
+  }
+
+  /* annotation lines for construction artboard */
+  .annotate { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="marks.jsx"></script>
+<script type="text/babel" src="app.jsx"></script>
+</body>
+</html>
