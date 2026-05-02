@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Hashly mark">
+  <title>Hashly</title>
+  <desc>Geometric # mark — italic verticals at -9° slope, 11u bar weight, accent gold on the right vertical, rendered on a 100u grid. Source of truth: specs/v0.2-mvp-completion/brand/project/marks.jsx (MarkGeometric).</desc>
+  <!-- horizontals -->
+  <rect x="6"  y="36" width="88" height="11" rx="2.5" fill="#14201b" />
+  <rect x="6"  y="56" width="88" height="11" rx="2.5" fill="#14201b" />
+  <!-- italic verticals — slanted, slightly narrower at top -->
+  <path d="M 41 4 L 49 4 L 36 100 L 28 100 Z" fill="#14201b" />
+  <path d="M 67 4 L 75 4 L 62 100 L 54 100 Z" fill="#c9a24b" />
+</svg>

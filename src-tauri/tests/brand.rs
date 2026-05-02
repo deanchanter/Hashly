@@ -219,6 +219,152 @@ fn index_html_contains_hashly_wordmark_element() {
     );
 }
 
+// =====================================================================
+// Issue #47 — MarkGeometric export to SVG + favicon + icon-primary.
+// Source of truth: specs/v0.2-mvp-completion/brand/project/marks.jsx
+// (MarkGeometric). The SVGs in `src/brand/` are exports.
+//
+// Pin shapes:
+//   - mark.svg, favicon.svg, icon-primary.svg exist with the canonical
+//     viewBox + structure (geometry per the brand sheet table).
+//   - index.html links the favicon (rel="icon" + svg+xml type).
+//   - USAGE.md codifies the do/don't rules + min-size 14px.
+//
+// PNG / .icns rasterization is deferred to follow-up #68 (cargo tauri
+// icon requires graphics tooling not present in CI; the SVG is the
+// canonical source — rasterizers consume it identically).
+// =====================================================================
+
+#[test]
+fn brand_mark_svg_exists_with_canonical_geometry() {
+    let svg = read_repo_file("src/brand/mark.svg");
+
+    // viewBox per the brand sheet — DO NOT change without updating
+    // marks.jsx + the brand sheet itself.
+    assert!(
+        svg.contains("viewBox=\"0 0 100 100\""),
+        "expected `src/brand/mark.svg` to use the brand-sheet viewBox `0 0 100 100`. Got:\n{}",
+        svg
+    );
+
+    // Two horizontals + two verticals, in the canonical fills.
+    // Horizontals are ink rects at y=36 and y=56 (bar gap = 9u + 11u
+    // bar weight; 36 + 11 + 9 = 56 ✓).
+    assert!(
+        svg.contains("y=\"36\"") && svg.contains("y=\"56\""),
+        "expected mark.svg horizontals at y=36 and y=56 (brand sheet: 11u bar weight + 9u gap). Got:\n{}",
+        svg
+    );
+
+    // Verticals are paths fill-coloured in ink and gold respectively
+    // (the right vertical is the accent stem).
+    assert!(
+        svg.contains("fill=\"#14201b\"") && svg.contains("fill=\"#c9a24b\""),
+        "expected mark.svg to fill horizontals + left vertical in ink (#14201b) and the right vertical in gold (#c9a24b). Got:\n{}",
+        svg
+    );
+}
+
+#[test]
+fn brand_favicon_svg_exists_with_paper_background() {
+    let svg = read_repo_file("src/brand/favicon.svg");
+
+    assert!(
+        svg.contains("viewBox=\"0 0 100 100\""),
+        "expected favicon.svg to share the canonical viewBox. Got:\n{}",
+        svg
+    );
+    // Paper (#f0f1ec) background rect — distinguishes favicon.svg
+    // from mark.svg (which has no background fill).
+    assert!(
+        svg.contains("fill=\"#f0f1ec\""),
+        "expected favicon.svg to render the mark on a paper (#f0f1ec) background. Got:\n{}",
+        svg
+    );
+    assert!(
+        svg.contains("fill=\"#c9a24b\""),
+        "expected favicon.svg to keep the gold accent stem (paper-bg variant uses ink glyph + gold accent per the brand sheet). Got:\n{}",
+        svg
+    );
+}
+
+#[test]
+fn brand_icon_primary_svg_renders_ink_on_gold_with_no_accent_stem() {
+    let svg = read_repo_file("src/brand/icon-primary.svg");
+
+    assert!(
+        svg.contains("viewBox=\"0 0 100 100\""),
+        "expected icon-primary.svg to share the canonical viewBox. Got:\n{}",
+        svg
+    );
+    // Gold (#c9a24b) background.
+    assert!(
+        svg.contains("fill=\"#c9a24b\""),
+        "expected icon-primary.svg to fill the background in gold (#c9a24b). Got:\n{}",
+        svg
+    );
+    // ABSENT: an inner gold fill — primary-icon variant is ink-on-
+    // ink for the verticals so the accent stem isn't gold-on-gold.
+    // Pin: the gold colour appears EXACTLY ONCE (the bg). The brand
+    // sheet's primary-icon AC: "no separate accent stem".
+    let gold_count = svg.matches("#c9a24b").count();
+    assert_eq!(
+        gold_count, 1,
+        "expected gold (#c9a24b) to appear exactly once in icon-primary.svg (the background). \
+         Brand sheet AC: \"on a gold background, the gold accent would disappear, so both \
+         verticals render in ink (no separate accent stem)\". Got {} occurrences in:\n{}",
+        gold_count, svg
+    );
+}
+
+#[test]
+fn index_html_links_the_svg_favicon() {
+    let html = read_repo_file("index.html");
+    assert!(
+        html.contains("rel=\"icon\""),
+        "expected index.html to declare a `<link rel=\"icon\" ...>` (Issue #47). Got:\n{}",
+        html
+    );
+    assert!(
+        html.contains("image/svg+xml"),
+        "expected the favicon link to use SVG type (`image/svg+xml`) — the SVG variant is \
+         the canonical favicon for v0.2; PNG fallback is a follow-up. Got:\n{}",
+        html
+    );
+    assert!(
+        html.contains("favicon.svg"),
+        "expected the favicon link to point at `favicon.svg`. Got:\n{}",
+        html
+    );
+}
+
+#[test]
+fn brand_usage_md_codifies_do_dont_rules_with_min_size_14px() {
+    let usage = read_repo_file("src/brand/USAGE.md");
+    let lower = usage.to_lowercase();
+    assert!(
+        lower.contains("do") && lower.contains("don't"),
+        "expected `src/brand/USAGE.md` to codify do/don't usage rules (Issue #47 AC: \
+         \"Mark usage rules codified\"). Got:\n{}",
+        usage
+    );
+    assert!(
+        lower.contains("14px"),
+        "expected USAGE.md to mention the 14px minimum size (brand sheet — below this \
+         threshold the bar weight + slope reads as visual noise). Got:\n{}",
+        usage
+    );
+    // The three "don't" axes from the brand sheet.
+    for forbid in ["recolour", "rotate", "below"] {
+        assert!(
+            lower.contains(forbid),
+            "expected USAGE.md to mention the `{}` rule. Got:\n{}",
+            forbid,
+            usage
+        );
+    }
+}
+
 #[test]
 fn style_css_declares_hashly_wordmark_styling_with_accent_gold_for_hash() {
     // The wordmark CSS rule applies `--accent-2` (gold) to the `#`
