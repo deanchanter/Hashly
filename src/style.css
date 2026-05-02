@@ -1,22 +1,117 @@
+/* Issue #46 — Brand palette + typography + wordmark (slice 11 / v0.2).
+ * Source of truth: specs/v0.2-mvp-completion/brand/. Hex values match
+ * the brand sheet verbatim — DO NOT round.
+ *
+ * The palette IS the theme: `prefers-color-scheme: dark` re-binds the
+ * variables (no JS toggle, no settings UI per spec.md).
+ */
+
+:root {
+  /* Paper / neutrals — backgrounds + rules */
+  --paper: #f0f1ec;
+  --paper-2: #e6e8e0;
+  --rule: #d2d6cb;
+
+  /* Ink / text */
+  --ink: #14201b;
+  --ink-2: #36443d;
+  --muted: #7c8479;
+
+  /* Accents — deep forest CTAs + muted gold accent */
+  --accent: #1e3a2f;
+  --accent-2: #c9a24b;
+
+  /* Typography stacks. Brand fonts fall back to system serifs/sans
+   * so the app renders correctly even before self-hosted woff2 files
+   * land (PRD: dev loads via Google Fonts; production self-hosted —
+   * follow-up issue tracks the actual loading).
+   */
+  --font-display: 'Fraunces', 'Times New Roman', Georgia, serif;
+  --font-body: 'Schibsted Grotesk', -apple-system, system-ui, 'Helvetica Neue', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark-mode inversion: ink becomes the surface, paper becomes the
+     * text. Forest + gold accents work in both modes (verified in the
+     * brand sheet). */
+    --paper: #14201b;
+    --paper-2: #1c2924;
+    --rule: #36443d;
+    --ink: #f0f1ec;
+    --ink-2: #d2d6cb;
+    --muted: #7c8479;
+    --accent: #c9a24b;
+    --accent-2: #c9a24b;
+  }
+}
+
 html,
 body {
   margin: 0;
   height: 100%;
-  font-family: -apple-system, system-ui, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+/* Issue #46 — `#hashly` wordmark in titlebar/header.
+ * Gold `#` (Fraunces 700) + ink `hashly` (Fraunces 600), baseline-aligned.
+ * Two <span>s so the gold accent applies to the # alone. */
+.hashly-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-2);
+}
+
+.hashly-wordmark {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.hashly-wordmark__hash {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.hashly-wordmark__name {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 #editor {
   padding: 2rem;
   max-width: 720px;
   margin: 0 auto;
+  color: var(--ink);
 }
 
 .ProseMirror {
   cursor: default;
+  font-family: var(--font-body);
+  color: var(--ink);
 }
 
 .ProseMirror[contenteditable="true"] {
   cursor: text;
+}
+
+.ProseMirror code,
+.ProseMirror pre {
+  font-family: var(--font-mono);
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
 }
 
 .hashly-edit-toggle {
@@ -26,15 +121,52 @@ body {
   z-index: 10;
   padding: 0.4rem 0.9rem;
   font: inherit;
-  border: 1px solid rgba(0, 0, 0, 0.2);
+  font-family: var(--font-body);
+  border: 1px solid var(--rule);
   border-radius: 4px;
-  background: #ffffff;
+  background: var(--paper);
+  color: var(--ink);
   cursor: pointer;
 }
 
-/* Issue #8 — unsaved-changes-on-close confirmation modal. Plain
-   centered card with a backdrop pseudo-overlay; styling intentionally
-   minimal until slice 11 lands the brand palette. */
+.hashly-edit-toggle:hover {
+  background: var(--paper-2);
+}
+
+.hashly-edit-toggle[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--paper);
+  border-color: var(--accent);
+}
+
+/* Issue #4 / #10 — file-error surface (kept neutral; reuses the
+ * paper/ink palette with a muted hint). */
+.hashly-file-error {
+  margin: 4rem auto;
+  max-width: 480px;
+  padding: 1.5rem;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-family: var(--font-body);
+}
+
+.hashly-file-error__message {
+  margin: 0 0 0.5rem 0;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.hashly-file-error__path {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+/* Issue #8 — unsaved-changes-on-close confirmation modal. */
 .hashly-close-confirm {
   position: fixed;
   z-index: 100;
@@ -44,18 +176,19 @@ body {
   min-width: 360px;
   max-width: 500px;
   padding: 1.5rem;
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: var(--paper);
+  border: 1px solid var(--rule);
   border-radius: 8px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
-  font-family: inherit;
+  box-shadow: 0 12px 36px rgba(20, 32, 27, 0.25);
+  font-family: var(--font-body);
+  color: var(--ink);
 }
 
 .hashly-close-confirm::before {
   content: '';
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(20, 32, 27, 0.35);
   z-index: -1;
 }
 
@@ -74,14 +207,16 @@ body {
 .hashly-close-confirm__buttons button {
   padding: 0.4rem 1rem;
   font: inherit;
-  border: 1px solid rgba(0, 0, 0, 0.2);
+  font-family: var(--font-body);
+  border: 1px solid var(--rule);
   border-radius: 4px;
-  background: #ffffff;
+  background: var(--paper);
+  color: var(--ink);
   cursor: pointer;
 }
 
 .hashly-close-confirm__buttons button[data-action="save"] {
-  background: #1e3a2f;
-  color: #ffffff;
-  border-color: #1e3a2f;
+  background: var(--accent);
+  color: var(--paper);
+  border-color: var(--accent);
 }
