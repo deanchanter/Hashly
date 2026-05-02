@@ -114,6 +114,22 @@ body {
   letter-spacing: -0.02em;
 }
 
+/* Issue #78 slice 1 — broken-image alt-text fallback surface.
+ * The MutationObserver in src/main.ts replaces broken <img>s with
+ * <span class="hashly-broken-image">{alt}</span>; this rule gives the
+ * span a visible surface that re-binds correctly in dark mode through
+ * the brand palette tokens. */
+.hashly-broken-image {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  background: var(--paper-2);
+  color: var(--ink-2);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
 .hashly-edit-toggle {
   position: fixed;
   top: 0.75rem;
