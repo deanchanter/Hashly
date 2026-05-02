@@ -114,6 +114,17 @@ body {
   letter-spacing: -0.02em;
 }
 
+/* Issue #78 slice 3 — fenced code blocks render as a distinct surface
+ * against the page (CLAUDE.md contract: "fenced blocks should render
+ * with a code background"). Inline `code` keeps its existing treatment
+ * — only the fenced surface changes. */
+.ProseMirror pre {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+
 /* Issue #78 slice 2 — GFM tables. Header columns get a bottom border
  * so they're unambiguously delimited; th/td share horizontal padding
  * so cell content lines up; paragraph margins inside cells collapse so
