@@ -139,6 +139,38 @@ body {
   border-color: var(--accent);
 }
 
+/* Issue #48 — frontmatter metadata panel rendered above the editor
+ * body. Read-mode minimum: plain key/value rendering; edit-mode
+ * fenced-code editing is a follow-up issue. */
+.hashly-frontmatter-panel {
+  max-width: 720px;
+  margin: 1.5rem auto 0 auto;
+  padding: 1rem 1.25rem;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.hashly-frontmatter-panel__row {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.15rem 0;
+}
+
+.hashly-frontmatter-panel__key {
+  color: var(--muted);
+  min-width: 6rem;
+}
+
+.hashly-frontmatter-panel__value {
+  color: var(--ink);
+  flex: 1;
+  word-break: break-word;
+}
+
 /* Issue #4 / #10 — file-error surface (kept neutral; reuses the
  * paper/ink palette with a muted hint). */
 .hashly-file-error {
