@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { mountEditor } from '../main';
@@ -196,5 +196,178 @@ describe('Issue #78 slice 1 — broken-image alt-text fallback', () => {
       hexHits,
       `expected NO hardcoded hex colors in the .hashly-broken-image rule (slice 1 AC4 + spec "no new hardcoded hex values"). Found: ${JSON.stringify(hexHits)}. Use \`var(--*)\` brand tokens instead.`,
     ).toBeNull();
+  });
+
+  // Adversarial-review fixes (post-merge of slice 1, before milestone PR).
+  // The slice 1 hook had four critical defects flagged by the reviewer pass:
+  //   - Observer leak: each mountEditor call installed a fresh observer
+  //     and never disconnected the previous one.
+  //   - Empty-alt: `![](src)` decorative-image idiom rendered an empty
+  //     pill (visible bordered surface with no text), worse than the OS
+  //     glyph it replaced.
+  //   - A11y: the fallback `<span>` carried no `role`/`aria-label`, so
+  //     screen readers announced the alt text as if it were body prose.
+  //   - Edit-mode: the swap happened outside ProseMirror's awareness, so
+  //     in edit mode a user could type into the `<span>` and lose those
+  //     keystrokes silently on save.
+  // And one critical correctness defect:
+  //   - Mixed-paragraph cleanup over-removed ProseMirror cursor anchors
+  //     for unrelated working images sharing the same parent.
+  // The tests below pin the fixes for each.
+
+  it('AC5 (review fix — observer leak): re-mounting on the same host disconnects the previous broken-image observer', async () => {
+    const disconnectSpy = vi.spyOn(MutationObserver.prototype, 'disconnect');
+    try {
+      await mountEditor(host, '![first](/__one__.png)');
+      const firstCount = disconnectSpy.mock.calls.length;
+      await mountEditor(host, '![second](/__two__.png)');
+      const secondCount = disconnectSpy.mock.calls.length;
+      expect(
+        secondCount,
+        'expected `disconnect()` to be called at least once more on the second mountEditor call (the previous broken-image observer should be torn down to prevent leaks). Adversarial-review finding: every mountEditor call leaked a MutationObserver.',
+      ).toBeGreaterThan(firstCount);
+    } finally {
+      disconnectSpy.mockRestore();
+    }
+  });
+
+  it('AC6 (review fix — empty alt): `![](src)` decorative-image idiom does NOT render an empty fallback pill', async () => {
+    const md = '![](/__broken__.png)';
+    await mountEditor(host, md);
+
+    const img = host.querySelector<HTMLImageElement>(
+      '.ProseMirror img[src*="__broken__"]',
+    );
+    expect(
+      img,
+      'precondition: Milkdown rendered the empty-alt image as an <img>.',
+    ).not.toBeNull();
+
+    img!.dispatchEvent(new Event('error', { cancelable: false }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const span = host.querySelector('.hashly-broken-image');
+    expect(
+      span,
+      'expected NO `.hashly-broken-image` element when the original alt is empty (review fix: empty alt = decorative image; surface no fallback pill). Found a span — the empty-alt path is rendering an empty bordered rectangle, the regression the reviewer flagged.',
+    ).toBeNull();
+
+    const lingering = host.querySelector(
+      '.ProseMirror img[src*="__broken__"]',
+    );
+    expect(
+      lingering,
+      'expected the broken <img> with the empty alt to be removed entirely (no OS "?" glyph, no fallback pill — the image disappears).',
+    ).toBeNull();
+  });
+
+  it('AC7 (review fix — a11y): the fallback span carries `role="img"` and `aria-label` with the alt text', async () => {
+    await mountEditor(host, '![rocket diagram](/__broken__.png)');
+
+    const img = host.querySelector<HTMLImageElement>('.ProseMirror img');
+    img!.dispatchEvent(new Event('error', { cancelable: false }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const span = host.querySelector('.hashly-broken-image');
+    expect(
+      span,
+      'precondition: the fallback span exists for non-empty alt.',
+    ).not.toBeNull();
+    expect(
+      span!.getAttribute('role'),
+      'expected `role="img"` on the fallback so assistive tech announces it as a graphic, not as inline body prose. Review finding: bare span lost the original <img alt> semantic.',
+    ).toBe('img');
+    expect(
+      span!.getAttribute('aria-label'),
+      'expected `aria-label` to carry the alt text so screen readers can announce the image\'s description even though the visual surface is the alt text itself.',
+    ).toBe('rocket diagram');
+  });
+
+  it('AC8 (review fix — edit-mode): the fallback span is `contenteditable="false"` so keystrokes do not silently mutate it', async () => {
+    await mountEditor(host, '![rocket diagram](/__broken__.png)');
+
+    const img = host.querySelector<HTMLImageElement>('.ProseMirror img');
+    img!.dispatchEvent(new Event('error', { cancelable: false }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const span = host.querySelector('.hashly-broken-image');
+    expect(
+      span!.getAttribute('contenteditable'),
+      'expected `contenteditable="false"` on the fallback so the user cannot type into a span ProseMirror does not know about. Review finding: in edit mode the swap leaked outside PM\'s state, so user keystrokes inside the pill vanished on save with no warning.',
+    ).toBe('false');
+  });
+
+  it('AC9 (review fix — mixed paragraph): cleanup preserves cursor separators adjacent to a WORKING <img> while removing those adjacent to the broken-image fallback', async () => {
+    await mountEditor(host, '![bad](/__broken__.png)');
+
+    const brokenImg = host.querySelector<HTMLImageElement>(
+      '.ProseMirror img[src*="__broken__"]',
+    );
+    expect(
+      brokenImg,
+      'precondition: the broken image rendered.',
+    ).not.toBeNull();
+
+    const para = brokenImg!.parentElement!;
+
+    // Simulate ProseMirror's runtime structure: a working image and its
+    // cursor-anchor separator inserted into the same paragraph as the
+    // broken image. jsdom does not run the ProseMirror view layer, so we
+    // construct the structure manually — mirrors the runtime DOM the
+    // reviewer's probe observed.
+    const okImg = document.createElement('img');
+    okImg.src = '/__ok__.png';
+    okImg.alt = 'ok';
+    const okSep = document.createElement('img');
+    okSep.className = 'ProseMirror-separator';
+    // Layout: <broken-img>, <ok-sep>, <ok-img>
+    // okSep is adjacent to the working <img>, NOT to a broken-image span
+    // (yet). After the swap, okSep should still survive because it is
+    // not next to the new fallback span.
+    para.appendChild(okSep);
+    para.appendChild(okImg);
+
+    brokenImg!.dispatchEvent(new Event('error', { cancelable: false }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const fallbackSpan = para.querySelector('.hashly-broken-image');
+    expect(
+      fallbackSpan,
+      'precondition: the broken-image fallback span replaced the broken <img>.',
+    ).not.toBeNull();
+
+    const okImgAfter = para.querySelector('img[src="/__ok__.png"]');
+    expect(
+      okImgAfter,
+      'expected the working <img> to survive the broken-image cleanup. Review finding: cleanScopedSeparators over-removed nodes adjacent to unrelated working images sharing the parent.',
+    ).not.toBeNull();
+
+    const survivingSeparators = Array.from(
+      para.querySelectorAll<HTMLImageElement>(
+        ':scope > .ProseMirror-separator',
+      ),
+    );
+    // The separator next to the WORKING image must survive.
+    const separatorAdjacentToWorkingImg = survivingSeparators.some((sep) => {
+      const prev = sep.previousElementSibling;
+      const next = sep.nextElementSibling;
+      const isAdjacentToWorking =
+        (prev && prev.tagName === 'IMG' && prev.getAttribute('src') === '/__ok__.png') ||
+        (next && next.tagName === 'IMG' && next.getAttribute('src') === '/__ok__.png');
+      return Boolean(isAdjacentToWorking);
+    });
+    expect(
+      separatorAdjacentToWorkingImg,
+      `expected at least one .ProseMirror-separator to survive next to the working <img>. Review finding: the cleanup currently strips every separator under the parent, breaking cursor handling for unrelated images. Surviving separators were: ${JSON.stringify(
+        survivingSeparators.map((s) => ({
+          prev: s.previousElementSibling?.tagName,
+          next: s.nextElementSibling?.tagName,
+        })),
+      )}.`,
+    ).toBe(true);
   });
 });
