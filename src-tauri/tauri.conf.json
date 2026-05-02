@@ -24,6 +24,14 @@
   "bundle": {
     "active": false,
     "targets": "all",
-    "icon": []
+    "icon": [],
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown Document",
+        "description": "Markdown / .md document opened by Hashly",
+        "role": "Editor"
+      }
+    ]
   }
 }

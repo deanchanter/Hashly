@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the main window: core APIs (window, event, menu) plus the dialog plugin used by File > Open. App commands registered via invoke_handler (e.g. read_md_file) are reachable via the core IPC channel without per-command ACL entries.",
+  "description": "Default capability for the main window: core APIs (window, event, menu) plus the dialog plugin used by File > Open and the v0.2 save / unsaved-on-close / save-failure dialogs. App commands registered via invoke_handler (read_md_file, save_md_file) are reachable via the core IPC channel without per-command ACL entries — granting per-command permissions would create a confusing dual-gate surface. v0.2 audit (issue #50): dialog:default in tauri-plugin-dialog v2.7 already grants allow-message + allow-save + allow-open, which together cover save-failure (#7), unsaved-on-close (#8), File > Open (#5), and Save As… (#7 / #49) — no new dialog permission entries needed. @tauri-apps/plugin-fs is intentionally NOT granted: file IO must flow through the canonicalize+allow-list-hardened seams in src/lib.rs (#44 + #7), not via fs:write-all. See src-tauri/tests/capabilities.rs for the pinning + scope-creep + plugin-version drift tests.",
   "windows": ["main"],
   "permissions": [
     "core:default",
