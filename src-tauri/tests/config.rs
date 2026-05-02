@@ -139,6 +139,104 @@ fn tauri_conf_app_security_csp_is_restrictive_and_set() {
 }
 
 #[test]
+fn tauri_conf_registers_md_file_association_for_finder_double_click() {
+    // Issue #5 — Hashly must register as a handler for `.md` files so
+    // double-clicking a `.md` in Finder launches/focuses Hashly with
+    // that file. Tauri 2's bundle config exposes this via
+    // `bundle.fileAssociations` (an array of association objects).
+    //
+    // The slice's runtime test (the actual Finder→.app smoke) requires
+    // an installed bundle and is gated on slice 16 / #12 (`bundle.active`
+    // is false in v0.2 main milestone PR). This static config pin is the
+    // load-bearing part that travels with the v0.2 milestone PR — flip
+    // `bundle.active = true` later and the association is already there.
+    //
+    // Contract:
+    //   1. `bundle.fileAssociations` is present and is an array.
+    //   2. At least one entry covers the `md` extension.
+    //   3. The same (or a separate) entry includes `markdown` for
+    //      sources that prefer the long form.
+    //   4. The entry's `role` (when present) is `Editor` (macOS UTI
+    //      role). v0.2 promotes editing to a first-class path; the
+    //      association must reflect that — `Viewer` would deny the
+    //      "Open With > Hashly" right-click on a non-Hashly-default
+    //      `.md` and break the persona's quick-fix flow.
+    let cfg = load_config();
+    let bundle = cfg
+        .get("bundle")
+        .and_then(|b| b.as_object())
+        .expect("expected `bundle` object in tauri.conf.json (Issue #5 — file association config lives under bundle)");
+
+    let associations = bundle
+        .get("fileAssociations")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| {
+            panic!(
+                "expected `bundle.fileAssociations` array in tauri.conf.json (Issue #5 — \
+                 without it, double-clicking a `.md` in Finder won't launch Hashly even \
+                 once the .dmg ships from #12). Bundle was: {:?}",
+                bundle
+            )
+        });
+
+    assert!(
+        !associations.is_empty(),
+        "expected at least one entry in `bundle.fileAssociations` (Issue #5)"
+    );
+
+    // Collect all extensions across all association entries.
+    let mut all_exts: Vec<String> = Vec::new();
+    let mut roles: Vec<String> = Vec::new();
+    for assoc in associations {
+        let obj = assoc
+            .as_object()
+            .expect("each fileAssociations entry must be an object");
+        let exts = obj
+            .get("ext")
+            .and_then(|v| v.as_array())
+            .expect("each fileAssociations entry must have an `ext` array");
+        for e in exts {
+            if let Some(s) = e.as_str() {
+                all_exts.push(s.to_lowercase());
+            }
+        }
+        if let Some(role) = obj.get("role").and_then(|v| v.as_str()) {
+            roles.push(role.to_string());
+        }
+    }
+
+    assert!(
+        all_exts.iter().any(|e| e == "md"),
+        "expected `bundle.fileAssociations` to include the `md` extension (Issue #5 — \
+         the canonical persona use case is double-clicking a `.md` in Finder). Got \
+         extensions: {:?}",
+        all_exts
+    );
+    assert!(
+        all_exts.iter().any(|e| e == "markdown"),
+        "expected `bundle.fileAssociations` to also include the `markdown` extension \
+         (long-form alternative; many spec authoring tools save with this extension). \
+         Got: {:?}",
+        all_exts
+    );
+
+    // Role pin: if any entry sets a role, it MUST be `Editor`. Skip
+    // the assertion if no entry sets a role (Tauri defaults to a
+    // sensible value); this lets the contract evolve without
+    // pinning a default that may change.
+    if !roles.is_empty() {
+        assert!(
+            roles.iter().all(|r| r == "Editor"),
+            "expected any explicit `role` in fileAssociations to be \"Editor\" — v0.2 \
+             promotes editing to a first-class path; `Viewer` denies \"Open With > Hashly\" \
+             on a non-Hashly-default `.md` and breaks the persona's quick-fix flow. \
+             Got roles: {:?}",
+            roles
+        );
+    }
+}
+
+#[test]
 fn tauri_conf_has_before_dev_and_build_commands() {
     // Issue #2: tauri must hand frontend lifecycle to Vite.
     let cfg = load_config();

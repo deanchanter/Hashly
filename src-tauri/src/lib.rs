@@ -108,7 +108,16 @@ pub fn save_md_file_within(
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    // Issue #5 — slice 4: switched from the `Builder::run()` one-shot
+    // to the `Builder::build()` + `app.run(handler)` pattern so the
+    // run-loop closure can match `RunEvent::Opened`. macOS sends
+    // `RunEvent::Opened { urls }` when the user double-clicks a
+    // registered .md in Finder, picks "Open With > Hashly", or runs
+    // `open -a Hashly file.md`. The handler converts each `file://`
+    // URL to a path string and emits a `file-opened-by-os` frontend
+    // event; src/main.ts listens for that event and routes through
+    // `read_md_file` → `handleFileOpened`.
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![read_md_file, save_md_file])
         .setup(|app| {
@@ -125,8 +134,28 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Hashly");
+        .build(tauri::generate_context!())
+        .expect("error while building Hashly");
+
+    app.run(|app_handle, event| {
+        // `RunEvent::Opened` is macOS/iOS-only in Tauri 2 — gate the
+        // match arm to keep Linux/Windows builds compiling. The
+        // referenced `app_handle` is intentionally bound on all
+        // platforms so the closure signature stays stable.
+        let _ = app_handle;
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        if let tauri::RunEvent::Opened { urls } = event {
+            for url in urls {
+                if let Ok(path) = url.to_file_path() {
+                    if let Some(p) = path.to_str() {
+                        let _ = app_handle.emit("file-opened-by-os", p.to_string());
+                    }
+                }
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        let _ = event;
+    });
 }
 
 #[cfg(test)]
