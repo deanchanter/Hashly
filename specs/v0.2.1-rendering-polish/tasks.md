@@ -1,16 +1,18 @@
 # Tasks: Hashly v0.2.1 — Rendering Polish
 
-Source: [spec.md](./spec.md)
+**Shipped on 2026-05-02** via the milestone PR. Source: [spec.md](./spec.md).
 
-Sequencing: discover the broken-image hook first (it's the only slice with a real unknown), then land the CSS-only slices in any order. All slices share `src/style.css` and Vitest in `src/__tests__/` — one PR per slice keeps review tight.
+Sequencing: discover the broken-image hook first (it's the only slice with a real unknown), then land the CSS-only slices in any order. All slices share `src/style.css` and Vitest in `src/__tests__/` — landed as a single milestone PR rather than one PR per slice.
 
-- [ ] 1. [Broken-image alt-text fallback (discovery + implementation)](https://github.com/deanchanter/Hashly/issues/78) — *partial: image fallback only*
-- [ ] 2. [GFM table header borders + cell padding](https://github.com/deanchanter/Hashly/issues/78) — *partial: table layout only*
-- [ ] 3. [Fenced code block surface (background + border)](https://github.com/deanchanter/Hashly/issues/78) — *partial: code surface only*
-- [ ] 4. [List item rhythm — collapse paragraph margins inside `<li>`](https://github.com/deanchanter/Hashly/issues/78) — *partial: list rhythm only*
-- [ ] 5. [H1 GitHub-style underline rule](https://github.com/deanchanter/Hashly/issues/79)
+- [x] 1. [Broken-image alt-text fallback (discovery + implementation)](https://github.com/deanchanter/Hashly/issues/78) — *MutationObserver hook in `src/main.ts` swaps broken <img>s with `<span role="img" aria-label="{alt}">{alt}</span>`*
+- [x] 2. [GFM table header borders + cell padding](https://github.com/deanchanter/Hashly/issues/78)
+- [x] 3. [Fenced code block surface (background + border)](https://github.com/deanchanter/Hashly/issues/78)
+- [x] 4. [List item rhythm — collapse paragraph margins inside `<li>`](https://github.com/deanchanter/Hashly/issues/78)
+- [x] 5. [H1 GitHub-style underline rule](https://github.com/deanchanter/Hashly/issues/79)
 
-#78 is a bundle issue covering slices 1–4; close it when all four ship. #79 closes with slice 5.
+#78 closes via the milestone PR (all four slices shipped). #79 closes with slice 5.
+
+Follow-ups filed during the adversarial-review pass and deferred to v0.2.2 / v0.3: #80 (test coverage strengthening), #81 (broken-image hook hardening), #82 (--rule contrast against --paper), #83 (H1 scoping + nested-list margins + minor polish).
 
 ---
 

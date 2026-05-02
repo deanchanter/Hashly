@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Hashly** — a WYSIWYG markdown reader/editor for macOS, built with [Tauri](https://tauri.app/) v2. Rust core + Vite/TypeScript frontend wiring up [Milkdown](https://milkdown.dev/). v0.2 promotes editing to a first-class path: quick-fix editing of someone else's spec AND authoring a new spec from a baked-in PRD/Vision/Task template. The repo was previously named `pomodoro`; update any stale references.
 
-Specs live in `specs/`. Product direction: `specs/hashly-vision.md`. Latest shipped milestone: `specs/v0.2-mvp-completion/` (Cmd+S save, unsaved-on-close dialog, Finder double-click wireup, light/dark via `prefers-color-scheme`, brand palette + `#hashly` wordmark, frontmatter recognition, File > New From Template). Slice 16 / #12 .dmg packaging is deferred to a v0.2.x point release. v0.1 milestone (`specs/v0.1-wysiwyg-editor/`) shipped via PR #42.
+Specs live in `specs/`. Product direction: `specs/hashly-vision.md`. Latest shipped milestone: `specs/v0.2.1-rendering-polish/` (GFM table polish, fenced code surface, broken-image alt-text fallback, list rhythm, GitHub-style H1 underline). Previous milestone: `specs/v0.2-mvp-completion/` (Cmd+S save, unsaved-on-close dialog, Finder double-click wireup, light/dark via `prefers-color-scheme`, brand palette + `#hashly` wordmark, frontmatter recognition, File > New From Template). Slice 16 / #12 .dmg packaging is deferred to a v0.2.x point release. v0.1 milestone (`specs/v0.1-wysiwyg-editor/`) shipped via PR #42.
 
 ## Commands
 
