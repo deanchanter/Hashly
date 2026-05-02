@@ -852,6 +852,105 @@ describe('Issue #7 — `saveCurrent` named export + Cmd+S keydown wiring', () =>
     vi.doUnmock('@tauri-apps/api/event');
   });
 
+  it('saveCurrent() in READ mode does NOT call invoke even when dirty is sticky-true (Issue #33 save-time mode guard)', async () => {
+    // Adversarial-review finding: the dirty-bit-side defense from
+    // mountEditor (read-mode mounts get no dispatchTransaction wrapper)
+    // only blocks the dirty *signal*, not the *outcome*. Without a
+    // save-time mode guard, a sequence of (a) edit-mode → type → dirty=true,
+    // (b) toggle back to read (dirty stays sticky), (c) programmatic
+    // dispatch in read mode mutates view state, (d) Cmd+S — would
+    // persist the read-mode mutation. The dispatchTransaction defense
+    // didn't fire (read mode = no wrapper), so the user has no signal,
+    // and saveCurrent happily serializes the now-mutated read-mode view.
+    //
+    // Closing the attack: saveCurrent must refuse to save when mode
+    // isn't 'edit'. The persona walkthrough in spec.md shows the
+    // user-Cmd+S path explicitly happening in edit mode ("they fix the
+    // line in WYSIWYG, hit Cmd+S"); refusing read-mode saves matches
+    // the documented workflow and closes the structural gap #33
+    // names. (#33 is named for the write-handle bypass; the spec at
+    // line 88 says it must be enforced once save exists.)
+    const invokeMock = vi.fn(async () => undefined);
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+    vi.doMock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
+    const { bootstrap, handleFileOpened, getCurrentEditor, isDirty, saveCurrent } =
+      (await import('../main')) as unknown as {
+        bootstrap: () => void;
+        handleFileOpened: (
+          payload: { path: string; name: string; content: string },
+          host: HTMLElement,
+        ) => Promise<void>;
+        getCurrentEditor: () => Editor | null;
+        isDirty: () => boolean;
+        saveCurrent: () => Promise<void>;
+      };
+
+    bootstrap();
+    await new Promise((r) => setTimeout(r, 100));
+    await handleFileOpened(
+      { path: '/tmp/hashly-tests/m.md', name: 'm.md', content: '# M\n' },
+      host,
+    );
+
+    // Edit-mode → type → dirty=true.
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    toggle.click();
+    await new Promise((r) => setTimeout(r, 80));
+    getCurrentEditor()!.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const end = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('!', end));
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(isDirty(), 'precondition: dirty true after edit').toBe(true);
+
+    // Toggle back to read. Dirty stays sticky-true.
+    toggle.click();
+    await new Promise((r) => setTimeout(r, 80));
+    expect(
+      host.querySelector<HTMLElement>('.ProseMirror')?.getAttribute('contenteditable'),
+      'precondition: editor must be in read mode after toggle-back',
+    ).toBe('false');
+    expect(isDirty(), 'precondition: dirty stays sticky-true through toggle-back').toBe(true);
+
+    // Programmatic mutation in read mode — the #33 attack. The
+    // dispatchTransaction wrapper is NOT installed (read mode),
+    // so dirty stays whatever it was; view state is mutated.
+    getCurrentEditor()!.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const end = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('PWNED', end));
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Cmd+S in read mode. Save-time mode guard MUST refuse.
+    await saveCurrent();
+
+    expect(
+      invokeMock,
+      'expected saveCurrent() to NOT call invoke when mode is "read" (Issue #33 — save-time mode guard closes the read-mode-mutation-then-save attack vector). Without this guard, a programmatic mutation in read mode would be persisted by Cmd+S.',
+    ).not.toHaveBeenCalled();
+
+    // Sticky-dirty preserved — the user's prior real edits are still
+    // unsaved and the title still warns. (This is correct: the read-
+    // mode save was refused, but the actual edit-mode dirty is real
+    // and shouldn't be cleared.)
+    expect(
+      isDirty(),
+      'expected isDirty() to remain true after a refused read-mode save (the prior edit-mode edits are still unsaved).',
+    ).toBe(true);
+    expect(
+      document.title.startsWith(DIRTY_PREFIX),
+      `expected document.title to STILL carry the dirty bullet after a refused read-mode save. Got: ${JSON.stringify(document.title)}`,
+    ).toBe(true);
+
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/event');
+  });
+
   it('plain `s` keydown (no modifier) does NOT drive saveCurrent', async () => {
     // Defensive pin: a regression that listens on `key === 's'`
     // without the modifier check would fire on every literal 's'

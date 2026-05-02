@@ -271,6 +271,19 @@ export async function saveCurrent(): Promise<void> {
     // it). For this slice, Cmd+S on a path-less buffer is a no-op.
     return;
   }
+  // Issue #33 save-time mode guard. The dirty-bit-side defense
+  // (read-mode mounts get no dispatchTransaction wrapper) blocks the
+  // dirty SIGNAL but not the OUTCOME — a programmatic mutation in read
+  // mode (e.g. via getCurrentEditor() in devtools, or via a future UI
+  // component that misuses the editor handle) leaves view state
+  // mutated. Without this guard, sticky-dirty + read-mode-mutation +
+  // Cmd+S would persist the read-mode mutation. The persona walkthrough
+  // in spec.md shows the user-Cmd+S path explicitly happening in edit
+  // mode ("they fix the line in WYSIWYG, hit Cmd+S"); refusing read-
+  // mode saves matches the documented workflow. Slice 8 (#8 unsaved-
+  // on-close) covers the close-with-unsaved-edits path so users don't
+  // lose work; this guard only refuses the explicit read-mode Cmd+S.
+  if (currentEditorMode !== 'edit') return;
   const editor = currentEditor;
   if (!editor) return;
   let md: string;
