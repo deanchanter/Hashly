@@ -237,6 +237,72 @@ fn tauri_conf_registers_md_file_association_for_finder_double_click() {
 }
 
 #[test]
+fn tauri_conf_has_bundle_active_true_with_dmg_target_and_icon_set() {
+    // Issue #12 (slice 16) — v0.2.2 ships the unsigned `.dmg`. The
+    // load-bearing config is:
+    //   1. `bundle.active = true` (without it, `cargo tauri build`
+    //      produces no bundle artifact).
+    //   2. `bundle.targets` is the array `["dmg"]` — explicitly narrow,
+    //      not the default `"all"`. v0.2.2 ships only `.dmg`; the bare
+    //      `.app` is not a delivered artifact and doubles build time.
+    //   3. `bundle.icon` is a non-empty array of paths. An empty array
+    //      ships an iconless app, which `cargo tauri build` accepts but
+    //      Finder renders as the generic doc icon.
+    //
+    // Pinning these catches the failure mode where someone flips
+    // `bundle.active = false` to "speed up local builds" and forgets to
+    // flip it back, or someone widens `bundle.targets` to "all" and
+    // accidentally ships the standalone `.app`.
+    let cfg = load_config();
+    let bundle = cfg
+        .get("bundle")
+        .and_then(|b| b.as_object())
+        .expect("expected `bundle` object in tauri.conf.json (Issue #12)");
+
+    let active = bundle
+        .get("active")
+        .and_then(|v| v.as_bool())
+        .expect("expected bundle.active to be a boolean (Issue #12)");
+    assert!(
+        active,
+        "expected bundle.active = true so `cargo tauri build` produces a `.dmg` (Issue #12)"
+    );
+
+    let targets = bundle
+        .get("targets")
+        .and_then(|v| v.as_array())
+        .expect("expected bundle.targets to be an array (Issue #12 — explicit, not the default \"all\")");
+    let target_strs: Vec<&str> = targets.iter().filter_map(|v| v.as_str()).collect();
+    assert_eq!(
+        target_strs,
+        vec!["dmg"],
+        "expected bundle.targets to be exactly [\"dmg\"] (Issue #12 — v0.2.2 ships only the .dmg, \
+         not the bare .app). Got: {:?}",
+        target_strs
+    );
+
+    let icon = bundle
+        .get("icon")
+        .and_then(|v| v.as_array())
+        .expect("expected bundle.icon to be an array (Issue #12)");
+    assert!(
+        !icon.is_empty(),
+        "expected bundle.icon to be a non-empty array of paths (Issue #12 — empty ships an \
+         iconless app)"
+    );
+    // The macOS bundle requires an .icns somewhere in the icon list.
+    let has_icns = icon
+        .iter()
+        .filter_map(|v| v.as_str())
+        .any(|p| p.ends_with(".icns"));
+    assert!(
+        has_icns,
+        "expected bundle.icon to include an .icns path for the macOS bundle (Issue #12). Got: {:?}",
+        icon
+    );
+}
+
+#[test]
 fn tauri_conf_has_before_dev_and_build_commands() {
     // Issue #2: tauri must hand frontend lifecycle to Vite.
     let cfg = load_config();

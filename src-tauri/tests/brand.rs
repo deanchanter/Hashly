@@ -365,6 +365,73 @@ fn brand_usage_md_codifies_do_dont_rules_with_min_size_14px() {
     }
 }
 
+// =====================================================================
+// Issue #68 — Icon rasterization (slice 16 / v0.2.2 packaging follow-up).
+// `cargo tauri icon` consumes a 1024x1024 PNG rasterization of the SVG
+// source; the rasterized PNG and the generated icon set are committed
+// so builds are reproducible without librsvg/inkscape on every machine.
+// =====================================================================
+
+#[test]
+fn brand_icon_1024_png_is_committed_and_non_empty() {
+    // Pin: re-rasterization of icon-primary.svg is reproducible because
+    // the 1024x1024 source PNG ships in-tree. If someone deletes the
+    // committed PNG to "save repo size" they lose the source-of-truth
+    // for `cargo tauri icon` and the icon set silently drifts on
+    // re-generation.
+    let path = repo_root().join("src/brand/raster/icon-1024.png");
+    let meta = fs::metadata(&path).unwrap_or_else(|e| {
+        panic!(
+            "expected `src/brand/raster/icon-1024.png` to be committed (Issue #68 — the 1024 \
+             PNG is the input to `cargo tauri icon` and must travel with the SVG so builds \
+             are reproducible without librsvg). Could not stat: {}",
+            e
+        )
+    });
+    assert!(
+        meta.len() > 0,
+        "expected `src/brand/raster/icon-1024.png` to be non-empty (Issue #68); got {} bytes",
+        meta.len()
+    );
+}
+
+#[test]
+fn tauri_icons_dir_contains_macos_required_set() {
+    // Pin: the macOS bundle icon set is committed under
+    // `src-tauri/icons/`. `cargo tauri icon` generates a wider set
+    // (iOS / Android / Windows-store), but Hashly is macOS-only in
+    // v0.2.2 — those subdirs are intentionally pruned (see spec
+    // § Decisions). The macOS-needed files are: icon.icns, icon.png,
+    // 32x32.png, 64x64.png, 128x128.png, 128x128@2x.png. Pinning each
+    // catches the failure mode where someone deletes "redundant" icons
+    // and breaks `bundle.icon` resolution at build time.
+    let icons_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("icons");
+    for required in [
+        "icon.icns",
+        "icon.png",
+        "32x32.png",
+        "64x64.png",
+        "128x128.png",
+        "128x128@2x.png",
+    ] {
+        let path = icons_root.join(required);
+        let meta = fs::metadata(&path).unwrap_or_else(|e| {
+            panic!(
+                "expected `src-tauri/icons/{}` to be committed (Issue #68 — macOS bundle \
+                 icon set; regenerate with `cargo tauri icon src/brand/raster/icon-1024.png`). \
+                 Could not stat: {}",
+                required, e
+            )
+        });
+        assert!(
+            meta.len() > 0,
+            "expected `src-tauri/icons/{}` to be non-empty; got {} bytes",
+            required,
+            meta.len()
+        );
+    }
+}
+
 #[test]
 fn style_css_declares_hashly_wordmark_styling_with_accent_gold_for_hash() {
     // The wordmark CSS rule applies `--accent-2` (gold) to the `#`

@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-dmg:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install librsvg
+        # Defensive: the rasterized 1024 PNG and the generated icon set
+        # are committed to git, so the release build does NOT rasterize
+        # the SVG. librsvg is here only so a future workflow change can
+        # regenerate icons in CI without a separate setup step.
+        run: brew install librsvg
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: npm ci
+        run: npm ci
+
+      - name: cargo tauri build
+        run: cargo tauri build --target aarch64-apple-darwin
+
+      - name: Upload .dmg to release
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          files: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+      # ----------------------------------------------------------------
+      # TODO: Homebrew cask bump — uncomment after creating the
+      # `deanchanter/homebrew-hashly` tap repo and adding a
+      # `HOMEBREW_TAP_GITHUB_TOKEN` repository secret with `repo` scope
+      # on that tap. The cask formula path inside the tap repo is
+      # `Casks/hashly.rb`; the action below opens a PR there with the
+      # new version + SHA256.
+      # ----------------------------------------------------------------
+      # - name: Compute .dmg sha256
+      #   id: sha
+      #   run: |
+      #     DMG=$(ls target/aarch64-apple-darwin/release/bundle/dmg/*.dmg | head -n 1)
+      #     echo "dmg_path=$DMG" >> "$GITHUB_OUTPUT"
+      #     echo "sha256=$(shasum -a 256 "$DMG" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      #
+      # - name: Bump cask formula in deanchanter/homebrew-hashly
+      #   uses: dawidd6/action-homebrew-bump-formula@<pin-sha>
+      #   with:
+      #     token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      #     tap: deanchanter/homebrew-hashly
+      #     cask: hashly
+      #     tag: ${{ github.ref_name }}
+      #     download_sha256: ${{ steps.sha.outputs.sha256 }}
