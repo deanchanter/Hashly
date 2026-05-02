@@ -308,6 +308,121 @@ export async function saveCurrent(): Promise<void> {
   }
 }
 
+// Issue #8 — slice 3: unsaved-changes-on-close dialog. The modal lives
+// in the WebView (Tauri 2's plugin-dialog only natively supports
+// 2-button confirms; 3-button "Save / Don't Save / Cancel" requires a
+// custom modal). The HTML5 `<dialog role="alertdialog">` element gives
+// modal behavior for free + screen-reader-correct semantics.
+export function confirmUnsavedClose(
+  filename: string | null,
+): Promise<'save' | 'discard' | 'cancel'> {
+  return new Promise((resolve) => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'alertdialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.className = 'hashly-close-confirm';
+
+    const message = document.createElement('p');
+    message.className = 'hashly-close-confirm__message';
+    const docPhrase = filename ?? 'this untitled document';
+    message.textContent = `Do you want to save the changes you made in ${docPhrase}?`;
+    dialog.appendChild(message);
+
+    const buttonRow = document.createElement('div');
+    buttonRow.className = 'hashly-close-confirm__buttons';
+
+    const make = (label: string, action: 'save' | 'discard' | 'cancel') => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = label;
+      btn.dataset.action = action;
+      btn.addEventListener('click', () => {
+        if (dialog.parentElement) dialog.parentElement.removeChild(dialog);
+        resolve(action);
+      });
+      return btn;
+    };
+    // Order matches macOS-native unsaved-changes prompt:
+    // Save (default) | Don't Save | Cancel.
+    buttonRow.appendChild(make('Save', 'save'));
+    buttonRow.appendChild(make("Don't Save", 'discard'));
+    buttonRow.appendChild(make('Cancel', 'cancel'));
+    dialog.appendChild(buttonRow);
+
+    document.body.appendChild(dialog);
+  });
+}
+
+// Issue #8 decision function. Pure(-ish) — all side-effects come in
+// through injected deps, so the test can supply mocks. The runtime
+// wiring is in `installCloseGuard` below.
+export interface CloseRequestDeps {
+  event: { preventDefault: () => void };
+  isDirty: () => boolean;
+  currentFilename: () => string | null;
+  confirm: (filename: string | null) => Promise<'save' | 'discard' | 'cancel'>;
+  save: () => Promise<void>;
+  destroy: () => Promise<void>;
+}
+
+export async function handleCloseRequest(deps: CloseRequestDeps): Promise<void> {
+  if (!deps.isDirty()) {
+    // Clean: let the close proceed. No preventDefault, no destroy
+    // (the OS-level close handler does its job).
+    return;
+  }
+  deps.event.preventDefault();
+  const choice = await deps.confirm(deps.currentFilename());
+  if (choice === 'cancel') return; // window stays open
+  if (choice === 'discard') {
+    await deps.destroy();
+    return;
+  }
+  // 'save'
+  await deps.save();
+  // Critical UX pin (#8 verify): only destroy if the save actually
+  // cleared dirty. saveCurrent swallows invoke rejections and leaves
+  // dirty sticky-true; in that case we MUST NOT close — otherwise
+  // the user picks Save, the save fails, and the window closes anyway,
+  // silently losing work. The save-failure dialog (paired with #50
+  // ACL extension) will give the user a Save As… escape later; until
+  // then, sticky-dirty + no-destroy is the safe default.
+  if (!deps.isDirty()) {
+    await deps.destroy();
+  }
+}
+
+let closeGuardInstalled = false;
+
+export async function installCloseGuard(): Promise<void> {
+  if (closeGuardInstalled) return;
+  closeGuardInstalled = true;
+  // Lazy-import the Tauri window API so non-Tauri envs (Vitest+jsdom)
+  // don't blow up on the import. Same pattern as the menu-open-file
+  // listener in `bootstrap`.
+  let getCurrentWindow: typeof import('@tauri-apps/api/window').getCurrentWindow;
+  try {
+    ({ getCurrentWindow } = await import('@tauri-apps/api/window'));
+  } catch {
+    return;
+  }
+  try {
+    const win = getCurrentWindow();
+    await win.onCloseRequested(async (event) => {
+      await handleCloseRequest({
+        event,
+        isDirty,
+        currentFilename: () => currentFileName,
+        confirm: confirmUnsavedClose,
+        save: saveCurrent,
+        destroy: () => win.destroy(),
+      });
+    });
+  } catch {
+    // listen rejects in non-Tauri envs — acceptable.
+  }
+}
+
 let saveHandlerInstalled = false;
 
 export function installSaveHandler(target: Document = document): void {
@@ -364,6 +479,9 @@ export function bootstrap(): void {
   installDragDropGuard();
   installEditToggle();
   installSaveHandler();
+  void installCloseGuard().catch(() => {
+    /* non-Tauri envs — close guard is a no-op there */
+  });
   void listen<void>('menu-open-file', () => {
     const editorHost = document.getElementById('editor');
     if (editorHost) {

@@ -31,3 +31,57 @@ body {
   background: #ffffff;
   cursor: pointer;
 }
+
+/* Issue #8 — unsaved-changes-on-close confirmation modal. Plain
+   centered card with a backdrop pseudo-overlay; styling intentionally
+   minimal until slice 11 lands the brand palette. */
+.hashly-close-confirm {
+  position: fixed;
+  z-index: 100;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 360px;
+  max-width: 500px;
+  padding: 1.5rem;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
+  font-family: inherit;
+}
+
+.hashly-close-confirm::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: -1;
+}
+
+.hashly-close-confirm__message {
+  margin: 0 0 1.25rem 0;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.hashly-close-confirm__buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.hashly-close-confirm__buttons button {
+  padding: 0.4rem 1rem;
+  font: inherit;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.hashly-close-confirm__buttons button[data-action="save"] {
+  background: #1e3a2f;
+  color: #ffffff;
+  border-color: #1e3a2f;
+}
