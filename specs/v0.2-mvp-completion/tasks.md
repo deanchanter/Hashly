@@ -1,25 +1,27 @@
 # Tasks: Hashly v0.2 — MVP Completion
 
+**Shipped on 2026-05-02** (slices 1–15; slice 16 / #12 .dmg packaging deferred to v0.2.x point release per user.)
+
 Source: [spec.md](./spec.md)
 
 Sequencing per PRD: deferred-MVP slices first (1–10), wedge layered on top (13–14), brand alongside (11–12), ACL hardening (15) pairs with whichever dialog slice lands first, packaging (16) closes the milestone.
 
-1. [Milkdown round-trip fidelity gate](https://github.com/deanchanter/Hashly/issues/45) — verify CommonMark+GFM (+ frontmatter) survive edit↔serialize with AST-equality before save lands.
-2. [Save in place via Cmd+S](https://github.com/deanchanter/Hashly/issues/7) — Cmd+S writes the file in place; dirty indicator clears on success, blocking error dialog with Save As… on failure. Bundles #44, #33, #34.
-3. [Unsaved-changes-on-close dialog](https://github.com/deanchanter/Hashly/issues/8) — closing a window with unsaved edits prompts Save / Don't Save / Cancel.
-4. [Finder double-click opens .md](https://github.com/deanchanter/Hashly/issues/5) — double-click in Finder lands directly in reading view; bundles filename sanitization (#43).
-5. [Light & dark mode follows OS](https://github.com/deanchanter/Hashly/issues/9) — both themes render correctly, switches live with prefers-color-scheme; bundles dark-mode chunk of #29.
-6. [Tab key inside edit-mode editor](https://github.com/deanchanter/Hashly/issues/27) — Tab no longer indent-traps inside the editor.
-7. [handleFileOpened symmetry with toggleEditMode](https://github.com/deanchanter/Hashly/issues/35) — disable + null + re-entrancy guard.
-8. [mountEditor rejection in toggleEditMode](https://github.com/deanchanter/Hashly/issues/36) — no enabled button + stale label on rejection.
-9. [Error-path hardening for toggle/file-open/bootstrap](https://github.com/deanchanter/Hashly/issues/37) — rejection paths surface errors instead of swallowing.
-10. [bootstrap()'s showcase mount lacks .catch](https://github.com/deanchanter/Hashly/issues/31) — eliminate silent failure mode.
-11. [Brand: palette + typography + wordmark](https://github.com/deanchanter/Hashly/issues/46) — paper/ink palette as CSS vars, Fraunces/Schibsted Grotesk/JetBrains Mono wired, `#hashly` wordmark in titlebar.
-12. [Brand: MarkGeometric → app icon + favicon](https://github.com/deanchanter/Hashly/issues/47) — export mark to SVG, rasterize to .icns + favicon, wire into `tauri.conf.json` and `index.html`.
-13. [Frontmatter recognition end-to-end](https://github.com/deanchanter/Hashly/issues/48) — parse leading YAML, render metadata panel in reading view, editable text region in edit view, lossless round-trip on save.
-14. [File > New From Template](https://github.com/deanchanter/Hashly/issues/49) — PRD / Vision / Task templates open unsaved edit-mode buffer with frontmatter pre-filled (date, author); Cmd+S routes to Save As….
-15. [Tauri 2 capability ACL extension + pinning test](https://github.com/deanchanter/Hashly/issues/50) — add dialog:allow-save + dialog:allow-ask/message; pin ACL contents in tests/capabilities.rs.
-16. [Package & ship — unsigned .dmg + Homebrew cask](https://github.com/deanchanter/Hashly/issues/12) — flip bundle.active, GH Actions release pipeline, deanchanter/homebrew-hashly cask formula.
+- [x] 1. [Milkdown round-trip fidelity gate](https://github.com/deanchanter/Hashly/issues/45) — shipped via PR #51 (merged into milestone branch).
+- [x] 2. [Save in place via Cmd+S](https://github.com/deanchanter/Hashly/issues/7) — shipped (commits b138233 + d19827b + 15211ae). Bundles #44 (4f96072), #33 (15211ae mode guard), #34 (subsumed by slice 1 fidelity report + new disk-layer round-trip Rust test). Save-failure blocking-error dialog deferred to a follow-up paired with #50's `dialog:allow-message` (filed as #56).
+- [x] 3. [Unsaved-changes-on-close dialog](https://github.com/deanchanter/Hashly/issues/8) — shipped (a271cb8). 3-button custom HTML modal (Tauri 2 plugin-dialog only natively supports 2-button confirms). Modal a11y polish filed as follow-up #66.
+- [x] 4. [Finder double-click opens .md](https://github.com/deanchanter/Hashly/issues/5) — shipped (f3bdd84) + #43 filename sanitization (25b0806). Runtime smoke (actual Finder→.app double-click) gated on slice 16 / #12 packaging — `bundle.fileAssociations` configured, `RunEvent::Opened` handler wired, frontend listener routes through `read_md_file`.
+- [x] 5. [Light & dark mode follows OS](https://github.com/deanchanter/Hashly/issues/9) — shipped mechanically via slice 11's palette inversion (`@media (prefers-color-scheme: dark)` re-binds the variables; no JS toggle). Dark-mode chunk of #29 included. i18n + reduced-motion portions of #29 slip to v0.3.
+- [x] 6. [Tab key inside edit-mode editor](https://github.com/deanchanter/Hashly/issues/27) — shipped (79c799a). Tab kept as ProseMirror's natural list-indent; Escape blurs the editor + focuses the toggle as the explicit keyboard escape.
+- [x] 7. [handleFileOpened symmetry with toggleEditMode](https://github.com/deanchanter/Hashly/issues/35) — shipped (aaa102f, bundled with 8/9/10).
+- [x] 8. [mountEditor rejection in toggleEditMode](https://github.com/deanchanter/Hashly/issues/36) — shipped (aaa102f).
+- [x] 9. [Error-path hardening for toggle/file-open/bootstrap](https://github.com/deanchanter/Hashly/issues/37) — shipped (aaa102f).
+- [x] 10. [bootstrap()'s showcase mount lacks .catch](https://github.com/deanchanter/Hashly/issues/31) — shipped (aaa102f).
+- [x] 11. [Brand: palette + typography + wordmark](https://github.com/deanchanter/Hashly/issues/46) — shipped (32f62f9). Self-hosted woff2 loading + bundle-delta measurement deferred to follow-up #67 (system fallbacks render today).
+- [x] 12. [Brand: MarkGeometric → app icon + favicon](https://github.com/deanchanter/Hashly/issues/47) — shipped (8fca9ea). SVGs in `src/brand/`, favicon wired. PNG rasterization + `.icns` generation + `tauri.conf.json icon` wiring deferred to follow-up #68 (rasterization tooling not present in CI).
+- [x] 13. [Frontmatter recognition end-to-end](https://github.com/deanchanter/Hashly/issues/48) — shipped (2764096). Read-mode panel + byte-equal round-trip via raw-block preservation. Edit-mode fenced-code editing deferred to follow-up #69.
+- [x] 14. [File > New From Template](https://github.com/deanchanter/Hashly/issues/49) — shipped (4378b00). PRD / Vision / Task baked-in templates, autopopulation, Save-As routing.
+- [x] 15. [Tauri 2 capability ACL extension + pinning test](https://github.com/deanchanter/Hashly/issues/50) — shipped (bb2c587). Wire-up discovery: `dialog:default` already covers v0.2 needs; slice's deliverable is the audit trail (4 new pinning tests).
+- [ ] 16. [Package & ship — unsigned .dmg + Homebrew cask](https://github.com/deanchanter/Hashly/issues/12) — **deferred** out of milestone PR per user. Ships in a v0.2.x point release after this milestone PR merges.
 
 ---
 

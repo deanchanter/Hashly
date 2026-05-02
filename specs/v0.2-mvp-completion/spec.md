@@ -1,6 +1,6 @@
 # Hashly v0.2 — MVP Completion
 
-**Status:** Draft
+**Status:** Partially shipped (2026-05-02 — slice 16 / #12 .dmg packaging deferred to v0.2.x point release)
 **Author:** deanchanter
 **Date:** 2026-05-01
 

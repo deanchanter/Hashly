@@ -1,6 +1,6 @@
 # Hashly
 
-A WYSIWYG markdown reader for macOS, built with [Tauri](https://tauri.app/) v2.
+A WYSIWYG markdown reader and editor for macOS, built with [Tauri](https://tauri.app/) v2. v0.2 ships save in place (Cmd+S), unsaved-changes-on-close dialog, Finder double-click wireup, light/dark mode (follows OS), the Hashly brand identity (palette + `#hashly` wordmark + mark), YAML frontmatter recognition, and a *File > New From Template* menu with baked-in PRD / Vision / Task templates. The unsigned `.dmg` release is deferred to a v0.2.x point release.
 
 ## Prerequisites
 
