@@ -114,6 +114,10 @@ let currentEditor: Editor | null = null;
 let currentEditorMode: EditorMode = 'read';
 let currentEditorHost: HTMLElement | null = null;
 let currentFileName: string | null = null;
+// Issue #7: tracks the on-disk path of the currently open file so Cmd+S
+// can save in place. Null when no file is open OR for template-new
+// buffers (slice 14 / #49) which route Cmd+S through Save-As instead.
+let currentFilePath: string | null = null;
 
 export function getCurrentEditor(): Editor | null {
   return currentEditor;
@@ -239,6 +243,7 @@ export async function handleFileOpened(payload: FileOpened, host: HTMLElement): 
   }
   host.innerHTML = '';
   currentFileName = payload.name;
+  currentFilePath = payload.path;
   clearDirty();
   const editor = await mountEditor(host, payload.content);
   currentEditor = editor;
@@ -246,6 +251,66 @@ export async function handleFileOpened(payload: FileOpened, host: HTMLElement): 
   currentEditorHost = host;
   syncEditToggleUi();
   if (editToggleButton) editToggleButton.disabled = false;
+}
+
+// Issue #7 — slice 2: serialize the current editor doc and write it to
+// `currentFilePath` via the `save_md_file` Tauri command. On success,
+// clear dirty. On failure, log and leave dirty sticky-true so the user
+// still sees the title-bar bullet warning. The blocking save-failure
+// dialog from spec.md is deferred until #50 (ACL extension) lands the
+// `dialog:allow-message` capability.
+//
+// `saveCurrent` does NOT take an editor argument — it serializes the
+// internal `currentEditor` handle. That's the frontend half of #33's
+// write-handle-bypass hardening: no caller hands a write-capable
+// handle to the save path; the save path serializes the handle the
+// module already owns and ships a `&str` over IPC.
+export async function saveCurrent(): Promise<void> {
+  if (currentFilePath === null) {
+    // Save-As path is deferred to slice 14 (#49 templates pair with
+    // it). For this slice, Cmd+S on a path-less buffer is a no-op.
+    return;
+  }
+  const editor = currentEditor;
+  if (!editor) return;
+  let md: string;
+  try {
+    md = editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const serializer = ctx.get(serializerCtx);
+      return serializer(view.state.doc);
+    });
+  } catch (e) {
+    console.error('[hashly] save: serialization failed', e);
+    return;
+  }
+  try {
+    await invoke('save_md_file', { path: currentFilePath, content: md });
+    clearDirty();
+  } catch (e) {
+    // Sticky-dirty on failure. The user's edits are still unsaved;
+    // the title-bar bullet must keep warning them. Slice paired with
+    // #50 will add a blocking dialog on top of this log line.
+    console.error('[hashly] save: invoke failed', e);
+  }
+}
+
+let saveHandlerInstalled = false;
+
+export function installSaveHandler(target: Document = document): void {
+  if (saveHandlerInstalled) return;
+  if (typeof document === 'undefined') return;
+  saveHandlerInstalled = true;
+  target.addEventListener('keydown', (e: Event) => {
+    const ev = e as KeyboardEvent;
+    // Accept Cmd+S (Mac) and Ctrl+S (cross-platform). Hashly is
+    // mac-only per CLAUDE.md but the test surface (jsdom) and any
+    // future cross-platform contributor benefits from accepting both.
+    if (ev.key !== 's') return;
+    if (!ev.metaKey && !ev.ctrlKey) return;
+    ev.preventDefault();
+    void saveCurrent();
+  });
 }
 
 export async function openFileViaDialog(host: HTMLElement): Promise<void> {
@@ -285,6 +350,7 @@ export function bootstrap(): void {
   if (typeof document === 'undefined') return;
   installDragDropGuard();
   installEditToggle();
+  installSaveHandler();
   void listen<void>('menu-open-file', () => {
     const editorHost = document.getElementById('editor');
     if (editorHost) {

@@ -453,3 +453,442 @@ describe('Issue #33 / #7 — programmatic view.dispatch in READ mode does NOT fl
     ).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #7 — Cmd+S save flow (slice 2 / v0.2). The dirty-indicator half above
+// pinned the read side of dirty tracking. The block below pins the WRITE
+// side: a `saveCurrent()` async function and a `Cmd+S` (`metaKey + 's'`)
+// keydown handler that drives it, both wiring through to the Rust
+// `save_md_file` Tauri command via `invoke('save_md_file', { path, content })`.
+//
+// Scope notes for this slice:
+//
+//   - The save-failure BLOCKING ERROR DIALOG from spec.md is explicitly
+//     deferred to a later slice that pairs with #50 (ACL extension for
+//     `dialog:allow-message`). For this slice the failure path surfaces
+//     via `console.error` and leaves `dirty` sticky-true. Tests pin the
+//     sticky-dirty contract; the dialog test arrives with the dialog.
+//
+//   - The Save-As path (`currentFilePath === null`, e.g. template-new
+//     buffer from #49) is deferred to slice 14. For now, Cmd+S on a
+//     pathless buffer must NOT call invoke and must NOT clear dirty —
+//     the buffer stays dirty and unsaved until a path is established.
+//
+//   - The `getMarkdown()` serialization happens via the editor's own
+//     `serializerCtx`, the same way `toggleEditMode` already does it.
+//     `saveCurrent()` does not require an externally-obtained
+//     write-capable editor handle (#33 structural pin on the frontend
+//     side; the Rust side already pins the IPC boundary).
+// ---------------------------------------------------------------------------
+
+describe('Issue #7 — `saveCurrent` named export + Cmd+S keydown wiring', () => {
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/event');
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    host.id = 'editor';
+    document.body.appendChild(host);
+    document.title = 'Hashly';
+  });
+
+  it('exposes a named `saveCurrent` export that returns Promise<void>', async () => {
+    // Pinned testable seam: `saveCurrent(): Promise<void>` is exported
+    // as a named function from `src/main.ts`. It serializes the current
+    // editor doc, invokes the `save_md_file` Tauri command with the
+    // `currentFilePath` + serialized content, and resolves on success
+    // (clearing dirty) or on failure (logging + leaving dirty sticky).
+    //
+    // Without this seam, save can only be tested through synthetic
+    // keydown events — a brittle path that confuses save-flow regressions
+    // with keybinding regressions. The named export gives reviewers a
+    // single function to grep for and exercise.
+    const mod = (await import('../main')) as unknown as {
+      saveCurrent?: unknown;
+    };
+    expect(
+      typeof mod.saveCurrent,
+      'expected `saveCurrent` to be exported as a function from src/main.ts (Issue #7 — slice 2 save flow).',
+    ).toBe('function');
+  });
+
+  it('saveCurrent() with currentFilePath set invokes save_md_file with the file path and serialized markdown, then clears dirty', async () => {
+    // The central success path: open → edit → saveCurrent() → invoke is
+    // called once with `{ path, content }`, dirty clears.
+    const invokeMock = vi.fn(async () => undefined);
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+    vi.doMock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
+    const { bootstrap, handleFileOpened, getCurrentEditor, isDirty, saveCurrent } =
+      (await import('../main')) as unknown as {
+        bootstrap: () => void;
+        handleFileOpened: (
+          payload: { path: string; name: string; content: string },
+          host: HTMLElement,
+        ) => Promise<void>;
+        getCurrentEditor: () => Editor | null;
+        isDirty: () => boolean;
+        saveCurrent: () => Promise<void>;
+      };
+
+    bootstrap();
+    await new Promise((r) => setTimeout(r, 100));
+
+    await handleFileOpened(
+      { path: '/tmp/hashly-tests/doc.md', name: 'doc.md', content: '# Doc\n' },
+      host,
+    );
+
+    // Toggle to edit + dispatch a real edit so dirty flips.
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    toggle.click();
+    await new Promise((r) => setTimeout(r, 80));
+    getCurrentEditor()!.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const end = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('!', end));
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(isDirty(), 'precondition: dirty must be true after the edit').toBe(true);
+
+    await saveCurrent();
+
+    expect(
+      invokeMock,
+      'expected saveCurrent() to call invoke exactly once (Issue #7 — slice 2 save AC).',
+    ).toHaveBeenCalledTimes(1);
+    const call = invokeMock.mock.calls[0] as unknown as [string, { path: string; content: string }];
+    expect(
+      call[0],
+      'expected invoke command name to be `save_md_file` (Issue #7 — matches Rust command registered via invoke_handler).',
+    ).toBe('save_md_file');
+    expect(
+      call[1].path,
+      'expected invoke args.path to be the currentFilePath set on file-open (Issue #7 — slice 2 in-place save uses the file\'s original path).',
+    ).toBe('/tmp/hashly-tests/doc.md');
+    const sentContent = call[1].content;
+    expect(
+      typeof sentContent,
+      'expected invoke args.content to be a string (Issue #7 — Rust seam takes &str; the content must be already-serialized).',
+    ).toBe('string');
+    expect(
+      sentContent.length,
+      'expected invoke args.content to be non-empty (the editor had content; an empty save would silently truncate the file on disk).',
+    ).toBeGreaterThan(0);
+    // Substantive content pin: the edit we made (`!`) should be in
+    // the serialized output. Without this, an impl that always sends
+    // the original `defaultValueCtx` content would pass the type/length
+    // checks above but defeat the round-trip AC.
+    expect(
+      sentContent,
+      `expected the serialized content to reflect the in-memory edit ("!"); a regression that sends the on-load content would defeat the round-trip AC. Got content=${JSON.stringify(sentContent)}`,
+    ).toContain('!');
+
+    expect(
+      isDirty(),
+      'expected isDirty() === false after a successful save (Issue #7 — slice 2 AC: "After a successful save, the dirty indicator clears").',
+    ).toBe(false);
+    expect(
+      document.title.startsWith(DIRTY_PREFIX),
+      `expected document.title to NOT carry the dirty bullet after a successful save. Got: ${JSON.stringify(document.title)}`,
+    ).toBe(false);
+    // Belt: filename is still in the title.
+    expect(
+      document.title,
+      `expected the title to still reflect the filename after save. Got: ${JSON.stringify(document.title)}`,
+    ).toContain('doc.md');
+
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/event');
+  });
+
+  it('saveCurrent() leaves dirty sticky-true when invoke rejects (failure does not clear dirty)', async () => {
+    // The failure-path contract for THIS slice (the blocking dialog
+    // arrives later with #50): an invoke rejection must NOT clear
+    // dirty. The user's edits are still unsaved; the title bullet
+    // must still warn them.
+    const invokeMock = vi.fn(async () => {
+      throw new Error('save_md_file failed: outside the allowed root');
+    });
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+    vi.doMock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
+    const { bootstrap, handleFileOpened, getCurrentEditor, isDirty, saveCurrent } =
+      (await import('../main')) as unknown as {
+        bootstrap: () => void;
+        handleFileOpened: (
+          payload: { path: string; name: string; content: string },
+          host: HTMLElement,
+        ) => Promise<void>;
+        getCurrentEditor: () => Editor | null;
+        isDirty: () => boolean;
+        saveCurrent: () => Promise<void>;
+      };
+
+    bootstrap();
+    await new Promise((r) => setTimeout(r, 100));
+    await handleFileOpened(
+      { path: '/tmp/hashly-tests/fail.md', name: 'fail.md', content: '# Fail\n' },
+      host,
+    );
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    toggle.click();
+    await new Promise((r) => setTimeout(r, 80));
+    getCurrentEditor()!.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const end = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('!', end));
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(isDirty()).toBe(true);
+
+    // The contract: saveCurrent does NOT throw on Rust-side failure
+    // (matches openFileViaDialog's no-crash AC). The error surfaces
+    // through console.error / non-blocking inline indicator instead.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(
+      saveCurrent(),
+      'expected saveCurrent() to RESOLVE (not throw) when invoke rejects (Issue #7 — failure path surfaces via console/inline, not via uncaught exception).',
+    ).resolves.not.toThrow();
+    errSpy.mockRestore();
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(
+      isDirty(),
+      'expected isDirty() to REMAIN true after a failed save (Issue #7 — sticky-on-failure semantics; the user\'s edits are still unsaved and the title must warn them).',
+    ).toBe(true);
+    expect(
+      document.title.startsWith(DIRTY_PREFIX),
+      `expected document.title to STILL carry the dirty bullet after a failed save. Got: ${JSON.stringify(document.title)}`,
+    ).toBe(true);
+
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/event');
+  });
+
+  it('saveCurrent() with NO currentFilePath (template-new buffer / pre-open) does NOT call invoke and does NOT clear dirty', async () => {
+    // The Save-As deferred path: a buffer with no on-disk path (the
+    // post-#49 template-new flow, or any pre-open state). For this
+    // slice, Cmd+S on a path-less buffer is a no-op. Slice 14 routes
+    // it through Save-As (`save:allow-save` ACL + native picker).
+    //
+    // Pinning the no-op now prevents an impl that defaults `path` to
+    // a falsy / placeholder string and writes to e.g. `/Hashly` or
+    // `./untitled.md` — both of which would either fail in the Rust
+    // allow-list check or silently litter the user's home dir.
+    const invokeMock = vi.fn(async () => undefined);
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+    vi.doMock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
+    const { bootstrap, isDirty, saveCurrent } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+      isDirty: () => boolean;
+      saveCurrent: () => Promise<void>;
+    };
+
+    bootstrap();
+    await new Promise((r) => setTimeout(r, 100));
+    // No handleFileOpened — currentFilePath is null.
+
+    await saveCurrent();
+
+    expect(
+      invokeMock,
+      'expected invoke to NOT be called when there is no currentFilePath (Issue #7 — Save-As path is deferred to slice 14; pre-open Cmd+S is a no-op for v0.2).',
+    ).not.toHaveBeenCalled();
+    expect(
+      isDirty(),
+      'expected isDirty() to remain false (no edits, nothing to save).',
+    ).toBe(false);
+
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/event');
+  });
+
+  it('Cmd+S keydown (metaKey + s) on the document drives saveCurrent() exactly once', async () => {
+    // The keybinding wire-up: a single `keydown` listener installed in
+    // bootstrap() catches Cmd+S (Mac) and Ctrl+S (cross-platform). The
+    // listener calls `e.preventDefault()` (so the WebView's default
+    // "Save Page As" doesn't fire) and dispatches saveCurrent().
+    const invokeMock = vi.fn(async () => undefined);
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+    vi.doMock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
+    const { bootstrap, handleFileOpened, getCurrentEditor, isDirty } =
+      (await import('../main')) as unknown as {
+        bootstrap: () => void;
+        handleFileOpened: (
+          payload: { path: string; name: string; content: string },
+          host: HTMLElement,
+        ) => Promise<void>;
+        getCurrentEditor: () => Editor | null;
+        isDirty: () => boolean;
+      };
+
+    bootstrap();
+    await new Promise((r) => setTimeout(r, 100));
+    await handleFileOpened(
+      { path: '/tmp/hashly-tests/key.md', name: 'key.md', content: '# K\n' },
+      host,
+    );
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    toggle.click();
+    await new Promise((r) => setTimeout(r, 80));
+    getCurrentEditor()!.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const end = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('!', end));
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(isDirty()).toBe(true);
+
+    // Synthesize Cmd+S. Use a cancelable event so preventDefault is
+    // observable — without preventDefault, a non-Tauri fallback (a
+    // browser's Save Page As) would fire alongside our save.
+    const ev = new KeyboardEvent('keydown', {
+      key: 's',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(ev);
+
+    // The handler is async (fires saveCurrent() in the background).
+    // Wait for the microtask queue + the invoke microtask.
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(
+      ev.defaultPrevented,
+      'expected the Cmd+S keydown handler to call preventDefault() (Issue #7 — without preventDefault, the WebView\'s default "Save Page As" can fire alongside Hashly\'s save).',
+    ).toBe(true);
+
+    expect(
+      invokeMock,
+      'expected Cmd+S to drive exactly one invoke call (Issue #7 — slice 2 keybinding wire-up).',
+    ).toHaveBeenCalledTimes(1);
+    const cmdSentByKey = (invokeMock.mock.calls[0] as unknown as [string, unknown])[0];
+    expect(cmdSentByKey).toBe('save_md_file');
+
+    expect(
+      isDirty(),
+      'expected isDirty() to clear after the Cmd+S-driven save resolved successfully.',
+    ).toBe(false);
+
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/event');
+  });
+
+  it('Ctrl+S keydown (ctrlKey + s, no metaKey) ALSO drives saveCurrent() — cross-platform parity', async () => {
+    // Mac users press Cmd+S; non-Mac users press Ctrl+S. Hashly is
+    // mac-only per CLAUDE.md but the dev surface (vitest + jsdom)
+    // and any future cross-platform contributor should still be able
+    // to exercise save. Rather than gate on userAgent, we accept
+    // either modifier. The cost is one extra branch in the handler;
+    // the benefit is a stable test surface.
+    const invokeMock = vi.fn(async () => undefined);
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+    vi.doMock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
+    const { bootstrap, handleFileOpened, getCurrentEditor } = (await import(
+      '../main'
+    )) as unknown as {
+      bootstrap: () => void;
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+      getCurrentEditor: () => Editor | null;
+    };
+
+    bootstrap();
+    await new Promise((r) => setTimeout(r, 100));
+    await handleFileOpened(
+      { path: '/tmp/hashly-tests/c.md', name: 'c.md', content: '# C\n' },
+      host,
+    );
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    toggle.click();
+    await new Promise((r) => setTimeout(r, 80));
+    getCurrentEditor()!.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const end = (view.state.doc.firstChild?.content.size ?? 0) + 1;
+      view.dispatch(view.state.tr.insertText('!', end));
+    });
+    await new Promise((r) => setTimeout(r, 30));
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 's',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(
+      invokeMock,
+      'expected Ctrl+S to also drive a save call (cross-platform parity).',
+    ).toHaveBeenCalledTimes(1);
+
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/event');
+  });
+
+  it('plain `s` keydown (no modifier) does NOT drive saveCurrent', async () => {
+    // Defensive pin: a regression that listens on `key === 's'`
+    // without the modifier check would fire on every literal 's'
+    // typed in the editor. That would either spam invoke or — worse —
+    // double-write the file on every keystroke.
+    const invokeMock = vi.fn(async () => undefined);
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+    vi.doMock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+    vi.doMock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+
+    const { bootstrap, handleFileOpened } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+
+    bootstrap();
+    await new Promise((r) => setTimeout(r, 100));
+    await handleFileOpened(
+      { path: '/tmp/hashly-tests/n.md', name: 'n.md', content: '# N\n' },
+      host,
+    );
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 's', bubbles: true, cancelable: true }),
+    );
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(
+      invokeMock,
+      'expected a plain `s` keydown (no modifier) to NOT drive save (Issue #7 — modifier check is non-negotiable; without it, every literal `s` typed would fire a save).',
+    ).not.toHaveBeenCalled();
+
+    vi.doUnmock('@tauri-apps/api/core');
+    vi.doUnmock('@tauri-apps/plugin-dialog');
+    vi.doUnmock('@tauri-apps/api/event');
+  });
+});
