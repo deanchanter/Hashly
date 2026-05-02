@@ -63,6 +63,20 @@ pub fn read_md_file_within(path: &str, allowed_root: &Path) -> Result<FileOpened
     })
 }
 
+// Issue #49 — slice 14: returns the system user for template-new
+// frontmatter autopopulation. Falls back to the literal "Author" if
+// $USER is unavailable (sandboxed launches, headless runners). The
+// frontend treats this as fire-and-forget — a failure to read the
+// user is not a hard error; the literal fallback ships.
+#[tauri::command]
+fn get_current_user() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME")) // Windows fallback for cross-platform safety
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Author".to_string())
+}
+
 #[tauri::command]
 fn save_md_file(path: &str, content: &str) -> Result<(), String> {
     let home = std::env::var_os("HOME")
@@ -119,17 +133,51 @@ pub fn run() {
     // `read_md_file` → `handleFileOpened`.
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![read_md_file, save_md_file])
+        .invoke_handler(tauri::generate_handler![
+            read_md_file,
+            save_md_file,
+            get_current_user
+        ])
         .setup(|app| {
+            // Issue #49 — slice 14: File > New From Template submenu.
+            // Each entry emits a `new-from-template` event with a
+            // payload string identifying the template (`prd`, `vision`,
+            // `task`); the frontend resolves the template raw text,
+            // hydrates `{{author}}` / `{{date}}`, and mounts an
+            // unsaved edit-mode buffer.
+            let new_prd = MenuItemBuilder::with_id("new-prd", "PRD").build(app)?;
+            let new_vision = MenuItemBuilder::with_id("new-vision", "Vision").build(app)?;
+            let new_task = MenuItemBuilder::with_id("new-task", "Task").build(app)?;
+            let new_from_template = SubmenuBuilder::new(app, "New From Template")
+                .item(&new_prd)
+                .item(&new_vision)
+                .item(&new_task)
+                .build()?;
             let open = MenuItemBuilder::with_id("open", "Open…")
                 .accelerator("CmdOrCtrl+O")
                 .build(app)?;
-            let file = SubmenuBuilder::new(app, "File").item(&open).build()?;
+            let file = SubmenuBuilder::new(app, "File")
+                .item(&new_from_template)
+                .item(&open)
+                .build()?;
             let menu = MenuBuilder::new(app).item(&file).build()?;
             app.set_menu(menu)?;
             app.on_menu_event(|app_handle, event| {
-                if event.id().0 == "open" {
-                    let _ = app_handle.emit("menu-open-file", ());
+                let id = event.id().0.as_str();
+                match id {
+                    "open" => {
+                        let _ = app_handle.emit("menu-open-file", ());
+                    }
+                    "new-prd" => {
+                        let _ = app_handle.emit("new-from-template", "prd".to_string());
+                    }
+                    "new-vision" => {
+                        let _ = app_handle.emit("new-from-template", "vision".to_string());
+                    }
+                    "new-task" => {
+                        let _ = app_handle.emit("new-from-template", "task".to_string());
+                    }
+                    _ => {}
                 }
             });
             Ok(())
