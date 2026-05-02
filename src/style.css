@@ -114,6 +114,18 @@ body {
   letter-spacing: -0.02em;
 }
 
+/* Issue #78 slice 4 — list item rhythm. Collapse paragraph margins
+ * inside <li> so list rhythm matches paragraph rhythm rather than
+ * doubling. The 0.25rem item margin keeps siblings visually grouped
+ * without inflating the list. */
+.ProseMirror li > p {
+  margin: 0;
+}
+
+.ProseMirror li {
+  margin: 0.25rem 0;
+}
+
 /* Issue #78 slice 3 — fenced code blocks render as a distinct surface
  * against the page (CLAUDE.md contract: "fenced blocks should render
  * with a code background"). Inline `code` keeps its existing treatment
