@@ -114,6 +114,14 @@ body {
   letter-spacing: -0.02em;
 }
 
+/* Issue #79 — GitHub-style underline beneath H1 to mark the
+ * top-of-document break. H2 and H3 are intentionally unruled so the
+ * heading hierarchy stays legible against the body that follows. */
+.ProseMirror h1 {
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.3rem;
+}
+
 /* Issue #78 slice 4 — list item rhythm. Collapse paragraph margins
  * inside <li> so list rhythm matches paragraph rhythm rather than
  * doubling. The 0.25rem item margin keeps siblings visually grouped
