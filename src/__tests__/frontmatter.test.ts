@@ -311,3 +311,66 @@ describe('Issue #48 — saveCurrent re-emits frontmatter byte-equal ahead of edi
     vi.doUnmock('@tauri-apps/api/event');
   });
 });
+
+describe('Issue #48 — frontmatter panel survives read↔edit toggle', () => {
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.resetModules();
+    document.body.innerHTML = '';
+    host = document.createElement('div');
+    host.id = 'editor';
+    document.body.appendChild(host);
+    document.title = 'Hashly';
+  });
+
+  it('toggling read→edit re-renders the frontmatter panel above the editor', async () => {
+    // Cross-slice critical surfaced by the final adversarial review:
+    // toggleEditMode does `host.innerHTML = ''` which wiped the panel
+    // appended by handleFileOpened. Spec.md AC says reading view
+    // shows the metadata panel above the body — that contract has
+    // to survive mode toggles.
+    const { bootstrap, handleFileOpened } = (await import('../main')) as unknown as {
+      bootstrap: () => void;
+      handleFileOpened: (
+        payload: { path: string; name: string; content: string },
+        host: HTMLElement,
+      ) => Promise<void>;
+    };
+
+    bootstrap();
+    await new Promise((r) => setTimeout(r, 100));
+    await handleFileOpened(
+      {
+        path: '/tmp/x',
+        name: 'x.md',
+        content: '---\ntitle: Persists\nauthor: jane\n---\n# Body\n',
+      },
+      host,
+    );
+
+    expect(host.querySelector('[data-testid="frontmatter-panel"]'), 'precondition: panel renders on open').not.toBeNull();
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-testid="edit-toggle"]')!;
+    toggle.click();
+    await new Promise((r) => setTimeout(r, 80));
+
+    const panelAfterEdit = host.querySelector<HTMLElement>('[data-testid="frontmatter-panel"]');
+    expect(
+      panelAfterEdit,
+      'expected the frontmatter panel to STILL render after toggling read→edit (cross-slice fix: toggleEditMode must re-render the panel after wiping host.innerHTML).',
+    ).not.toBeNull();
+    expect(panelAfterEdit!.textContent ?? '').toContain('Persists');
+    expect(panelAfterEdit!.textContent ?? '').toContain('jane');
+
+    // And toggle back: panel still there.
+    toggle.click();
+    await new Promise((r) => setTimeout(r, 80));
+    const panelAfterRead = host.querySelector<HTMLElement>('[data-testid="frontmatter-panel"]');
+    expect(
+      panelAfterRead,
+      'expected the panel to STILL render after toggling edit→read.',
+    ).not.toBeNull();
+    expect(panelAfterRead!.textContent ?? '').toContain('Persists');
+  });
+});

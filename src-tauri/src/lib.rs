@@ -100,8 +100,35 @@ pub fn save_md_file_within(
     content: &str,
     allowed_root: &Path,
 ) -> Result<(), String> {
-    let canonical_path = Path::new(path).canonicalize().map_err(|e| e.to_string())?;
     let canonical_root = allowed_root.canonicalize().map_err(|e| e.to_string())?;
+
+    // Slice 2 + slice 14 / Save-As: the path may NOT exist yet (the
+    // user just picked it via the save picker on a template-new
+    // buffer). `Path::canonicalize()` returns ENOENT for non-existent
+    // paths, which would block all Save-As writes. Resolve the leaf
+    // by canonicalizing the PARENT directory + joining the file_name —
+    // the parent must exist (the picker would not have returned a
+    // path with a missing parent), so its canonical form is well-
+    // defined, and the file_name itself doesn't need to resolve.
+    //
+    // For an existing file, this two-step resolve produces the same
+    // canonical path as `path.canonicalize()` would, so the in-place
+    // save path is unaffected. For a new file, the canonical path is
+    // `<canonical_parent>/<file_name>`.
+    let raw = Path::new(path);
+    let canonical_path = match raw.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            let parent = raw
+                .parent()
+                .ok_or_else(|| format!("path has no parent directory: {}", path))?;
+            let file_name = raw
+                .file_name()
+                .ok_or_else(|| format!("path has no file name component: {}", path))?;
+            let canonical_parent = parent.canonicalize().map_err(|e| e.to_string())?;
+            canonical_parent.join(file_name)
+        }
+    };
 
     if !canonical_path.starts_with(&canonical_root) {
         return Err(format!(
@@ -110,12 +137,17 @@ pub fn save_md_file_within(
         ));
     }
 
-    let metadata = fs::metadata(&canonical_path).map_err(|e| e.to_string())?;
-    if !metadata.is_file() {
-        return Err(format!(
-            "path is not a regular file: {}",
-            canonical_path.display()
-        ));
+    // For an existing path, require it to be a regular file (reject
+    // directories, FIFOs, /dev/* etc.). For a new path, skip this
+    // check (the metadata call would fail with ENOENT, but we WANT
+    // to create it).
+    if let Ok(metadata) = fs::metadata(&canonical_path) {
+        if !metadata.is_file() {
+            return Err(format!(
+                "path is not a regular file: {}",
+                canonical_path.display()
+            ));
+        }
     }
 
     fs::write(&canonical_path, content).map_err(|e| e.to_string())

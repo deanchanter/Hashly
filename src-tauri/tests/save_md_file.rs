@@ -72,6 +72,82 @@ fn canonical_root(root: &Path) -> std::path::PathBuf {
 }
 
 #[test]
+fn save_as_creates_a_new_file_inside_allowed_root_when_target_does_not_exist() {
+    // Slice 14 / #49 Save-As: a template-new buffer has no on-disk
+    // file. The user picks a path via the save picker; that path
+    // does NOT exist yet. The save seam must accept this and CREATE
+    // the file — without parent-canonicalize fallback, every
+    // Save-As fails with ENOENT (cross-slice critical surfaced by
+    // the final adversarial review).
+    //
+    // Contract: target file does not exist, parent directory does;
+    // canonical(parent) is inside the allow-list root; save creates
+    // the file with the supplied content.
+    let dir = tempfile::tempdir().expect("could not create tempdir");
+    let root = canonical_root(dir.path());
+    let new_path = root.join("brand-new.md");
+    assert!(
+        !new_path.exists(),
+        "harness sanity: target must not exist before save"
+    );
+
+    save_md_file_within(new_path.to_str().unwrap(), "# New\n", &root)
+        .expect("Save-As must succeed when target does not exist (slice 14)");
+
+    let on_disk = fs::read_to_string(&new_path).expect("new file must exist after save");
+    assert_eq!(
+        on_disk, "# New\n",
+        "expected the saved content to land at the new path byte-for-byte."
+    );
+}
+
+#[test]
+fn save_as_to_path_with_missing_parent_directory_is_rejected() {
+    // Defensive pin: if the picker somehow returned a path whose
+    // parent doesn't exist (impossible via the native picker but
+    // possible via the test/IPC surface), the save must Err — not
+    // silently create a directory or quietly fail.
+    let dir = tempfile::tempdir().expect("could not create tempdir");
+    let root = canonical_root(dir.path());
+    let nope = root.join("does-not-exist").join("file.md");
+
+    let result = save_md_file_within(nope.to_str().unwrap(), "content", &root);
+    assert!(
+        result.is_err(),
+        "expected Err for a path whose parent directory does not exist; got Ok({:?})",
+        result.ok()
+    );
+}
+
+#[test]
+fn save_as_to_new_file_outside_allowed_root_is_rejected_with_outside_token() {
+    // The allow-list contract MUST hold for new files too — a
+    // malicious caller could pick a path under a sibling tempdir
+    // and trick Save-As into writing outside $HOME. Pin: even when
+    // the leaf doesn't exist, the canonical parent must still pass
+    // the allow-list prefix check.
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let root_a = canonical_root(dir_a.path());
+    let root_b = canonical_root(dir_b.path());
+
+    let outside_new = root_b.join("planted.md"); // doesn't exist, parent canonicalizes outside root_a
+    let result = save_md_file_within(outside_new.to_str().unwrap(), "ATTACKER", &root_a);
+    let err = result.err().expect(
+        "expected Err for a new-file Save-As whose canonical parent is outside the allow-list root.",
+    );
+    assert!(
+        err.to_lowercase().contains("outside"),
+        "expected 'outside' rejection token. Got: {:?}",
+        err
+    );
+    assert!(
+        !outside_new.exists(),
+        "expected the outside file to NOT have been created — rejection must happen before any write."
+    );
+}
+
+#[test]
 fn happy_path_writes_content_to_existing_file_within_allowed_root() {
     // Slice 2 contract: save-in-place writes the supplied content to
     // the canonical target path. The fixture file pre-exists (in-place
