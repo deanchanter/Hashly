@@ -1,6 +1,6 @@
 # Hashly v0.2.1 — Rendering Polish
 
-**Status:** Planned
+**Status:** Shipped 2026-05-02
 **Author:** deanchanter
 **Date:** 2026-05-02
 
@@ -28,15 +28,15 @@ Same persona as v0.2 — a PM reading or quick-fix-editing an SDD `.md` doc. v0.
 
 ### In scope — acceptance criteria
 
-- [ ] **#78 Rendered-markdown UX bundle** — five fixes shipped together because they all live in `src/style.css` against the existing brand variables:
+- [x] **#78 Rendered-markdown UX bundle** — five fixes shipped together because they all live in `src/style.css` against the existing brand variables:
   - Table header cells get `border-bottom: 1px solid var(--rule)` and shared horizontal padding with body cells, so columns are unambiguously delimited.
   - Table body cells use `padding: 0.5rem 0.75rem`; `td > p` and `th > p` margins collapse to `0` so row height follows content.
   - Fenced `pre` renders on `var(--paper-2)` with `1px solid var(--rule)` border, `border-radius: 6px`, `padding: 0.75rem 1rem`. No syntax highlighting in scope.
-  - Broken `<img>` surfaces its `alt` text inline (CSS `::after { content: attr(alt) }` on broken-image state, or equivalent hook on the Milkdown image node). The OS '?' glyph must not appear.
+  - Broken `<img>` surfaces its `alt` text inline via a small MutationObserver hook in `src/main.ts` that swaps the broken `<img>` with `<span class="hashly-broken-image" role="img" aria-label="{alt}" contenteditable="false">{alt}</span>`. CSS-only was not viable (no `:broken` pseudo-class). The OS '?' glyph never appears.
   - `<li>` items collapse `li > p` margins to `0` and use `margin: 0.25rem 0` on the `li` itself, so list rhythm matches paragraph rhythm.
-- [ ] **#79 H1 underline rule** — `.ProseMirror h1` gets `border-bottom: 1px solid var(--rule)` plus a small `padding-bottom`. H2 / H3 are unchanged. GitHub-style hierarchy.
-- [ ] **All changes flow through the existing CSS variables** in `src/style.css` (`--paper-2`, `--rule`, `--ink`, etc.). No new hardcoded hex values. Both light and dark modes verified.
-- [ ] **Vitest coverage** in `src/__tests__/` exercises (a) the H1 bottom-border, (b) the table header bottom-border, and (c) broken-image alt-text fallback, via DOM assertions on the mounted Milkdown editor.
+- [x] **#79 H1 underline rule** — `.ProseMirror h1` gets `border-bottom: 1px solid var(--rule)` plus `padding-bottom: 0.3rem`. H2 / H3 are unchanged. GitHub-style hierarchy.
+- [x] **All changes flow through the existing CSS variables** in `src/style.css` (`--paper-2`, `--rule`, `--ink`, etc.). No new hardcoded hex values. Both light and dark modes verified through palette-token references.
+- [x] **Vitest coverage** in `src/__tests__/` — broken-image fallback uses runtime DOM assertions on the mounted editor (`broken-image.test.ts`); slices 2–5 use the static-contract pattern (regex against `src/style.css`) because jsdom does not apply Vite-imported CSS to computed styles. Coverage gap (slices 2/3/4/5 are static-contract rather than behavioral DOM) tracked in #80.
 
 ### Out of scope
 
