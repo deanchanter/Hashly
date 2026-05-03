@@ -303,6 +303,42 @@ fn tauri_conf_has_bundle_active_true_with_dmg_target_and_icon_set() {
 }
 
 #[test]
+fn tauri_conf_macos_bundle_signs_adhoc() {
+    // v0.2.3 fix: without an explicit `bundle.macOS.signingIdentity`,
+    // `cargo tauri build` produces a .app whose Mach-O is linker-
+    // signed (mandatory on Apple Silicon to load) but whose BUNDLE has
+    // no `_CodeSignature/CodeResources` catalog. Sequoia rejects the
+    // unverifiable bundle signature with the "is damaged and can't be
+    // opened" Gatekeeper dialog — even after `xattr -cr` strips the
+    // quarantine. Setting `signingIdentity = "-"` directs Tauri to
+    // run `codesign --sign -` on the assembled bundle, producing a
+    // verifiable ad-hoc signature.
+    //
+    // This is NOT a substitute for proper Developer ID signing +
+    // notarization (still deferred per v0.2 PRD § Decisions). It only
+    // fixes the build defect that turned an unsigned-app friction
+    // event into a "the app is damaged" event.
+    //
+    // Pin: bundle.macOS.signingIdentity == "-".
+    let cfg = load_config();
+    let macos = cfg
+        .pointer("/bundle/macOS")
+        .and_then(|m| m.as_object())
+        .expect("expected `bundle.macOS` object in tauri.conf.json (v0.2.3 — bundle ad-hoc signing)");
+
+    let identity = macos
+        .get("signingIdentity")
+        .and_then(|v| v.as_str())
+        .expect("expected bundle.macOS.signingIdentity to be a string (v0.2.3)");
+    assert_eq!(
+        identity, "-",
+        "expected bundle.macOS.signingIdentity = \"-\" so `cargo tauri build` runs `codesign --sign -` \
+         on the assembled bundle (v0.2.3 — without it, Sequoia's Gatekeeper rejects the \
+         unverifiable bundle signature with \"is damaged and can't be opened\")"
+    );
+}
+
+#[test]
 fn tauri_conf_has_before_dev_and_build_commands() {
     // Issue #2: tauri must hand frontend lifecycle to Vite.
     let cfg = load_config();

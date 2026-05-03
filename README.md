@@ -17,11 +17,14 @@ The cask auto-strips the macOS quarantine flag, so first launch works without a 
 
 Grab `Hashly_<version>_aarch64.dmg` from the [latest release](https://github.com/deanchanter/Hashly/releases/latest), double-click, drag `Hashly.app` to `/Applications`.
 
-The `.dmg` is **unsigned** (no Apple Developer ID — see the v0.2 PRD for the rationale), so first launch shows a Gatekeeper warning ("cannot check for malicious software"). Workaround:
+The `.dmg` is **unsigned** (no Apple Developer ID — see the v0.2 PRD for the rationale). First launch on macOS Sequoia (15.x) refuses with *"Hashly is damaged and can't be opened"* — that dialog is misleading; the app is fine, macOS is rejecting an unsigned download. The Homebrew cask install above avoids this entirely. If you still want the `.dmg` path, strip the quarantine attribute after installing:
 
-1. Right-click `Hashly.app` in `/Applications`.
-2. Choose **Open**.
-3. Confirm in the dialog. macOS records the approval and subsequent launches behave normally.
+```sh
+xattr -cr /Applications/Hashly.app
+open -a Hashly
+```
+
+The older "right-click → Open" workaround stopped working on Sequoia for unsigned apps; `xattr -cr` is the current escape hatch. macOS records the approval after the first launch, so subsequent launches behave normally.
 
 ## Prerequisites (development)
 
