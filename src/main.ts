@@ -6,7 +6,7 @@ import {
   editorViewCtx,
   serializerCtx,
 } from '@milkdown/core';
-import * as yaml from 'js-yaml';
+import { parseFrontmatter, type FrontmatterParse } from './frontmatter';
 import { commonmark, headingIdGenerator } from '@milkdown/preset-commonmark';
 import { gfm } from '@milkdown/preset-gfm';
 import '@milkdown/prose/view/style/prosemirror.css';
@@ -273,61 +273,12 @@ export function sanitizeFilename(name: string): string {
   return name.replace(FILENAME_STRIP_RE, '');
 }
 
-// Issue #48 — Frontmatter recognition. Strict detection per the
-// spec.md AC: byte offset 0 must be `---\n`; the closing fence is
-// the first subsequent line of exactly `---` (optional trailing
-// whitespace). YAML between the fences is parsed via js-yaml; any
-// parse error → pass through (the doc renders as a plain markdown
-// doc, no panel).
-//
-// `frontmatter` is the RAW block including both fences — so re-emit
-// is byte-equal (no YAML serialization round-trip; we never re-emit
-// from the parsed object). `parsed` is the YAML-parsed object for
-// read-view metadata-panel rendering only.
-export interface FrontmatterParse {
-  frontmatter: string | null;
-  body: string;
-  parsed: Record<string, unknown> | null;
-}
-
-export function parseFrontmatter(text: string): FrontmatterParse {
-  const passthrough: FrontmatterParse = { frontmatter: null, body: text, parsed: null };
-  if (!text.startsWith('---\n')) return passthrough;
-
-  // Search for the closing fence: a line that is exactly `---`
-  // (optionally with trailing whitespace), terminated by `\n`.
-  // The line must NOT be the opening fence itself, so start scanning
-  // from index 4 (past the leading `---\n`).
-  const closingFenceRe = /\n---[ \t]*\n/;
-  const match = closingFenceRe.exec(text);
-  if (!match || match.index < 4) return passthrough;
-
-  // The closing fence's match starts with `\n`. The fence itself is
-  // from `match.index + 1` (the `---`) through `match.index + match[0].length`.
-  const fenceEnd = match.index + match[0].length;
-  const block = text.slice(0, fenceEnd);
-  const body = text.slice(fenceEnd);
-
-  // YAML-parse the content between the fences (excluding the fences
-  // themselves).
-  const yamlContent = text.slice(4, match.index + 1); // skip leading "---\n", up to the "\n" before the closing fence
-  let parsed: Record<string, unknown> | null = null;
-  try {
-    const parsedRaw = yaml.load(yamlContent);
-    if (parsedRaw && typeof parsedRaw === 'object' && !Array.isArray(parsedRaw)) {
-      parsed = parsedRaw as Record<string, unknown>;
-    } else {
-      // Non-object YAML (scalar, array, etc.) — pass through as plain
-      // markdown. The frontmatter contract is "key/value metadata".
-      return passthrough;
-    }
-  } catch {
-    // Malformed YAML — pass through.
-    return passthrough;
-  }
-
-  return { frontmatter: block, body, parsed };
-}
+// Issue #48 — Frontmatter recognition is implemented in `./frontmatter`
+// and re-exported here so existing call sites (`parseFrontmatter` /
+// `FrontmatterParse`) keep their import path. The extraction keeps the
+// parser usable from web-mode (`src/viewer.ts`) without dragging
+// `main.ts`'s Tauri side-effects.
+export { parseFrontmatter, type FrontmatterParse };
 
 let currentEditor: Editor | null = null;
 let currentEditorMode: EditorMode = 'read';
