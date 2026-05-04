@@ -20,6 +20,7 @@ import { gfm } from '@milkdown/preset-gfm';
 import '@milkdown/prose/view/style/prosemirror.css';
 import './style.css';
 import { parseFrontmatter } from './frontmatter';
+import { installBrokenImageFallback } from './broken-image-fallback';
 
 export async function mountViewer(
   host: HTMLElement,
@@ -68,6 +69,7 @@ export async function mountViewer(
     .use(gfm)
     .create();
   sanitizeUrlAttributes(host);
+  installBrokenImageFallback(host);
   return editor;
 }
 
