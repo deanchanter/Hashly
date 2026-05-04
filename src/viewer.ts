@@ -15,7 +15,7 @@ import {
   defaultValueCtx,
   editorViewOptionsCtx,
 } from '@milkdown/core';
-import { commonmark } from '@milkdown/preset-commonmark';
+import { commonmark, headingIdGenerator } from '@milkdown/preset-commonmark';
 import { gfm } from '@milkdown/preset-gfm';
 import '@milkdown/prose/view/style/prosemirror.css';
 import './style.css';
@@ -43,6 +43,26 @@ export async function mountViewer(
           'contenteditable': 'false',
         },
       }));
+      // Critical fix #4 — heading ID disambiguation. Mirrors the v0.2
+      // `mountEditor` block (issue #17) so duplicate-text headings get
+      // GitHub-compatible `section`, `section-1`, `section-2` suffixes
+      // and in-doc anchor links resolve to the rendered headings.
+      const seenHeadingIds = new Map<string, number>();
+      const nodeIdCache = new WeakMap<object, string>();
+      ctx.set(headingIdGenerator.key, (node) => {
+        const cached = nodeIdCache.get(node);
+        if (cached) return cached;
+        if (node.attrs?.id) {
+          nodeIdCache.set(node, node.attrs.id);
+          return node.attrs.id;
+        }
+        const base = node.textContent.toLowerCase().trim().replace(/\s+/g, '-');
+        const count = seenHeadingIds.get(base) ?? 0;
+        seenHeadingIds.set(base, count + 1);
+        const id = count === 0 ? base : `${base}-${count}`;
+        nodeIdCache.set(node, id);
+        return id;
+      });
     })
     .use(commonmark)
     .use(gfm)
