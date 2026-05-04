@@ -135,6 +135,86 @@ export function getViewerMarkdown(host: HTMLElement): string | null {
   return (entry.frontmatter ?? '') + body;
 }
 
+// Issue #91 / AC 5.1 — Edit-mode remount seam. Tears down the
+// read-only editor for `host` and remounts a fresh editable Milkdown
+// editor on the same host with the live serialized body, preserving
+// the captured raw frontmatter byte-equal so AC 5.6's round-trip
+// contract carries through. v0.2 desktop's `toggleEditMode` chose
+// destroy-then-remount over in-place `editable: () => true` because
+// some Milkdown plugin lifecycles don't re-evaluate the editable
+// getter; same call here.
+//
+// Returns the new Editor on success, or `null` when no viewer is
+// mounted in `host` (the safe-no-op floor for AC 5.1's defensive
+// click-before-mount path). This is internal-but-exported so
+// `src/edit-mode.ts` can drive the flip without re-implementing the
+// mount config; the leading underscore signals "viewer-internal seam,
+// not part of the public viewer API."
+export async function _remountAsEditable(
+  host: HTMLElement,
+): Promise<Editor | null> {
+  const entry = mountedViewers.get(host);
+  if (!entry) return null;
+
+  const body = entry.editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const serializer = ctx.get(serializerCtx);
+    return serializer(view.state.doc);
+  });
+
+  try {
+    await entry.editor.destroy();
+  } catch {
+    /* swallow — Milkdown teardown can throw `removeEventListener is
+       not defined` under jsdom; the new mount overwrites whatever
+       remains. */
+  }
+  // Clear any zombie .ProseMirror nodes the destroy left behind so
+  // the new editor mounts cleanly.
+  host.replaceChildren();
+
+  const editor = await Editor.make()
+    .config((ctx) => {
+      ctx.set(rootCtx, host);
+      ctx.set(defaultValueCtx, body);
+      ctx.update(editorViewOptionsCtx, (prev) => ({
+        ...prev,
+        editable: () => true,
+        attributes: {
+          'aria-readonly': 'false',
+          'role': 'textbox',
+          'tabindex': '0',
+          'contenteditable': 'true',
+        },
+      }));
+      const seenHeadingIds = new Map<string, number>();
+      const nodeIdCache = new WeakMap<object, string>();
+      ctx.set(headingIdGenerator.key, (node) => {
+        const cached = nodeIdCache.get(node);
+        if (cached) return cached;
+        if (node.attrs?.id) {
+          nodeIdCache.set(node, node.attrs.id);
+          return node.attrs.id;
+        }
+        const base = node.textContent.toLowerCase().trim().replace(/\s+/g, '-');
+        const count = seenHeadingIds.get(base) ?? 0;
+        seenHeadingIds.set(base, count + 1);
+        const id = count === 0 ? base : `${base}-${count}`;
+        nodeIdCache.set(node, id);
+        return id;
+      });
+    })
+    .use(commonmark)
+    .use(gfm)
+    .create();
+  sanitizeUrlAttributes(host);
+  installBrokenImageFallback(host);
+  // Preserve the captured frontmatter byte-equal across the flip
+  // (AC 5.6 cross-pin).
+  mountedViewers.set(host, { editor, frontmatter: entry.frontmatter });
+  return editor;
+}
+
 // Critical fix #1 — XSS scheme rejection. Milkdown's commonmark + gfm
 // presets pass URI schemes through verbatim, so a public-repo markdown
 // file can embed `[click](javascript:...)` / `![x](data:...)` and the
