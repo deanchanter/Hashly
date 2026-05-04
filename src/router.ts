@@ -53,6 +53,17 @@ export function parseSpecUrl(href: string): ParseSpecUrlResult {
   if (path.startsWith('/')) {
     return { error: '`path` must be repo-relative (no leading `/`)' };
   }
+  // Critical fix #2 — path-traversal hardening. URL normalization
+  // collapses `..` / `.` / empty segments before the HTTP request, so a
+  // path like `../attacker/payload.md` would silently retarget the
+  // fetch at a different repo while the viewer header still shows the
+  // trusted one. Reject any segment (post-decode) that is `.`, `..`,
+  // or empty.
+  for (const segment of path.split('/')) {
+    if (segment === '' || segment === '.' || segment === '..') {
+      return { error: '`path` must not contain `.`, `..`, or empty segments' };
+    }
+  }
 
   let ref: string;
   if (params.has('ref')) {

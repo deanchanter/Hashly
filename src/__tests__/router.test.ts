@@ -224,3 +224,136 @@ describe('Issue #90 / AC 4.1 — parseSpecUrl', () => {
     expect((result as { error: string }).error).toMatch(/ref/i);
   });
 });
+
+// Critical fix #2 (security) — path-traversal hardening.
+//
+// The original AC 4.1 parser only rejected paths starting with `/`.
+// That left a kill chain:
+//   ?repo=trusted/repo&path=../../attacker/malrepo/main/payload.md
+// would build the raw URL `https://raw.githubusercontent.com/trusted/repo/main/../../attacker/malrepo/main/payload.md`,
+// which the browser's URL normalizer collapses BEFORE the request,
+// resolving to the attacker's repo. The viewer header still shows
+// the trusted repo (textContent), giving the user no signal that
+// they're reading attacker content.
+//
+// Fix: reject any path that contains a `..`, `.`, or empty segment
+// (in raw OR percent-encoded form). The contract pinned here is
+// "every segment after URI-decode + split('/') must be a non-empty,
+// non-dot, non-dotdot string".
+
+describe('Issue #90 / Critical fix #2 — path-traversal rejection in parseSpecUrl', () => {
+  it('rejects a path containing a `..` segment (parent-directory traversal)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=../attacker/malrepo/main/payload.md',
+    );
+    expect(
+      result,
+      'expected `..` segment to be rejected — silent origin spoof otherwise (constructs a raw.githubusercontent.com URL that the browser normalizes to the attacker repo).',
+    ).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/path/i);
+  });
+
+  it('rejects a path with a `..` segment in the MIDDLE of the path', async () => {
+    // Mid-path `..` is the same exploit shape as leading `..` —
+    // the URL normalizer collapses it before the request. Pin
+    // both positions so a regression that only blocks leading
+    // traversal can't slip through.
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=specs/../../../attacker/payload.md',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/path/i);
+  });
+
+  it('rejects a path containing a `.` segment (current-directory)', async () => {
+    // `.` segments are also collapsed by URL normalization. While
+    // less impactful than `..`, accepting them lets an attacker
+    // craft a URL that looks structurally different from what the
+    // viewer header displays (e.g. `specs/./foo.md` vs `specs/foo.md`).
+    // Reject for consistency + defense in depth.
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=specs/./foo.md',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/path/i);
+  });
+
+  it('rejects a path that is exactly `..`', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl('?repo=trusted/repo&path=..');
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/path/i);
+  });
+
+  it('rejects a path that is exactly `.`', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl('?repo=trusted/repo&path=.');
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/path/i);
+  });
+
+  it('rejects a percent-encoded `..` segment (`%2E%2E`)', async () => {
+    // The parser URI-decodes the path BEFORE validation. Pin the
+    // post-decode check by feeding `%2E%2E` (which decodes to
+    // `..`) and asserting it's rejected. Without this, a naïve
+    // pre-decode regex check could be bypassed via encoding.
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=%2E%2E/attacker/payload.md',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/path/i);
+  });
+
+  it('rejects a path with empty segments (consecutive `//`)', async () => {
+    // `specs//foo.md` URL-normalizes to `specs/foo.md` — same
+    // structural-difference concern as `.`. Already implicitly
+    // rejected by some impls (split('/') yields empty string),
+    // but pinning explicitly so the contract is "every segment
+    // is a non-empty filesystem-name-like token".
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=specs//foo.md',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/path/i);
+  });
+
+  it('rejects a percent-encoded SINGLE dot segment (`%2E`)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=%2E/foo.md',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/path/i);
+  });
+
+  it('still accepts valid nested paths (`specs/v0.3-web-pivot/spec.md`) — regression on the happy path', async () => {
+    // Defensive: make sure the new traversal rejection didn't
+    // accidentally outlaw the common "nested subdirectory" case.
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=specs/v0.3-web-pivot/spec.md&ref=main',
+    );
+    expect(result).toEqual({
+      repo: 'trusted/repo',
+      path: 'specs/v0.3-web-pivot/spec.md',
+      ref: 'main',
+    });
+  });
+
+  it('still accepts paths whose segments contain dots (e.g. `v0.3-web-pivot`) — only `.` and `..` segments are forbidden', async () => {
+    // `v0.3-web-pivot` is a valid directory name in this repo.
+    // The traversal check must distinguish a SEGMENT that IS `.`
+    // from a segment that CONTAINS `.`s.
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=specs/v0.3-web-pivot/spec.md',
+    );
+    expect(result).toHaveProperty('repo');
+    expect((result as { path: string }).path).toBe('specs/v0.3-web-pivot/spec.md');
+  });
+});
