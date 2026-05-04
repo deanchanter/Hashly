@@ -20,6 +20,12 @@ import taskTemplate from './templates/task.md?raw';
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { parseSpecUrl } from './router';
+import { fetchSpec } from './fetch-spec';
+import { renderLanding } from './landing';
+import { renderViewerHeader } from './viewer-header';
+import { renderViewerError } from './viewer-error';
+import { mountViewer } from './viewer';
 
 const TEMPLATES: Record<'prd' | 'vision' | 'task', string> = {
   prd: prdTemplate,
@@ -938,6 +944,20 @@ export function bootstrap(): void {
     console.warn('[hashly] #editor host element not found; mountEditor not auto-invoked');
     return;
   }
+  // Issue #90 / fix #3 — env-branched bootstrap. In a Tauri runtime
+  // window.__TAURI_INTERNALS__ is injected by the host before user
+  // scripts run; in a plain browser it's absent. The web branch runs
+  // the AC 4.1–4.7 orchestration (parseSpecUrl → fetchSpec → mountViewer
+  // / renderLanding / renderViewerError); the Tauri branch keeps the
+  // unchanged v0.2 showcase mount.
+  const isTauri =
+    typeof (window as unknown as { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__ !== 'undefined';
+  if (!isTauri) {
+    const headerHost = document.getElementById('viewer-header') ?? host;
+    void bootstrapWeb(host, headerHost, window.location.href);
+    return;
+  }
   void mountEditor(host, showcase)
     .then((editor) => {
       currentEditor = editor;
@@ -954,6 +974,32 @@ export function bootstrap(): void {
       // mount is dev/build infrastructure rather than user content.
       console.error('[hashly] bootstrap: showcase mountEditor rejected', e);
     });
+}
+
+// Issue #90 / fix #3 — web-mode bootstrap orchestration.
+async function bootstrapWeb(
+  host: HTMLElement,
+  headerHost: HTMLElement,
+  href: string,
+): Promise<void> {
+  const parsed = parseSpecUrl(href);
+  if ('error' in parsed) {
+    renderLanding(host, parsed.error);
+    return;
+  }
+  renderViewerHeader(headerHost, parsed);
+  const result = await fetchSpec(parsed.repo, parsed.ref, parsed.path);
+  if (result.ok) {
+    try {
+      await mountViewer(host, result.content);
+    } catch (e) {
+      console.error('[hashly] bootstrapWeb: mountViewer rejected', e);
+      return;
+    }
+    document.title = `${parsed.path} — Hashly`;
+    return;
+  }
+  renderViewerError(host, result);
 }
 
 if (import.meta.env.MODE !== 'test') {
