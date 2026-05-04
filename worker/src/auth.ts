@@ -199,3 +199,33 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
 
   return new Response(null, { status: 302, headers });
 }
+
+/**
+ * AC 3.7 — `POST /auth/logout` invalidates the session.
+ *
+ * Deletes the KV record (if any) AND clears the cookie. Idempotent: callers
+ * with no cookie / unknown cookie / empty cookie all get a successful 200.
+ * The cleared cookie carries the same security attrs as a live one so the
+ * browser will actually overwrite it.
+ */
+export async function handleAuthLogout(request: Request, env: Env): Promise<Response> {
+  const cookies = parseCookieHeader(request.headers.get("Cookie"));
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+
+  if (sessionId) {
+    await env.SESSIONS.delete(sessionId);
+  }
+
+  const clearSessionCookie =
+    `${SESSION_COOKIE_NAME}=` +
+    `; HttpOnly` +
+    `; Secure` +
+    `; SameSite=Lax` +
+    `; Path=/` +
+    `; Max-Age=0`;
+
+  return new Response(null, {
+    status: 200,
+    headers: { "Set-Cookie": clearSessionCookie },
+  });
+}
