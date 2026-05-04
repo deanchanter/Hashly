@@ -117,8 +117,17 @@ async function exchangeInstallationToken(
 
 export async function handleAuthStart(_request: Request, env: Env): Promise<Response> {
   const state = mintNonce();
-  const slug = env.GITHUB_APP_SLUG;
-  const location = `https://github.com/apps/${slug}/installations/new?state=${state}`;
+  let location: string;
+  if (env.AUTH_METHOD === "oauth-app") {
+    const params = new URLSearchParams({
+      client_id: env.GITHUB_OAUTH_CLIENT_ID,
+      state,
+    });
+    location = `https://github.com/login/oauth/authorize?${params.toString()}`;
+  } else {
+    // Default: `app` (or undefined) — send the user to install the GitHub App.
+    location = `https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new?state=${state}`;
+  }
 
   const setCookie =
     `${STATE_COOKIE_NAME}=${state}` +
