@@ -47,5 +47,41 @@ export async function mountViewer(
     .use(commonmark)
     .use(gfm)
     .create();
+  sanitizeUrlAttributes(host);
   return editor;
+}
+
+// Critical fix #1 — XSS scheme rejection. Milkdown's commonmark + gfm
+// presets pass URI schemes through verbatim, so a public-repo markdown
+// file can embed `[click](javascript:...)` / `![x](data:...)` and the
+// click executes attacker JS on the viewer's origin. We post-process
+// the rendered DOM with a positive scheme allowlist: relative URLs,
+// `http:`, `https:`, and `mailto:` survive; everything else has the
+// dangerous attribute stripped. The element stays in the DOM (renders
+// as inert text) so the surrounding prose is unaffected.
+const SAFE_URL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
+
+function isSafeUrl(value: string): boolean {
+  // Relative URLs (no scheme — `#section`, `./foo.md`, `foo.md`) are
+  // safe. Detect a scheme by the same shape browsers use: optional
+  // leading whitespace, then `[a-zA-Z][a-zA-Z0-9+.-]*:`.
+  const trimmed = value.trim();
+  const match = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(trimmed);
+  if (!match) return true; // no scheme → relative → safe
+  return SAFE_URL_SCHEMES.has(match[1]!.toLowerCase() + ':');
+}
+
+function sanitizeUrlAttributes(host: HTMLElement): void {
+  host.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((a) => {
+    const href = a.getAttribute('href') ?? '';
+    if (!isSafeUrl(href)) {
+      a.removeAttribute('href');
+    }
+  });
+  host.querySelectorAll<HTMLImageElement>('img[src]').forEach((img) => {
+    const src = img.getAttribute('src') ?? '';
+    if (!isSafeUrl(src)) {
+      img.removeAttribute('src');
+    }
+  });
 }
