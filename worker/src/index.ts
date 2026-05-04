@@ -1,5 +1,5 @@
 // Hashly Worker entrypoint — module-worker default export.
-import { handleAuthStart } from "./auth";
+import { handleAuthCallback, handleAuthStart } from "./auth";
 import type { Env } from "./env";
 
 export default {
@@ -12,6 +12,10 @@ export default {
 
     if (url.pathname === "/auth/start" && request.method === "GET") {
       return handleAuthStart(request, env);
+    }
+
+    if (url.pathname === "/auth/callback" && request.method === "GET") {
+      return handleAuthCallback(request, env);
     }
 
     return new Response("not found", { status: 404 });
