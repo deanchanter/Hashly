@@ -4,6 +4,10 @@ src-tauri/gen/
 node_modules/
 dist/
 
+# Cloudflare Worker local-only secrets / build cache
+worker/.dev.vars
+worker/.wrangler/
+
 # ship-milestone skill scratch — local-only run log
 specs/**/ship-milestone-scratch.md
 .claude/.ship-milestone.*.scratch.md
