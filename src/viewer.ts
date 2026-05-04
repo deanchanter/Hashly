@@ -14,6 +14,8 @@ import {
   rootCtx,
   defaultValueCtx,
   editorViewOptionsCtx,
+  editorViewCtx,
+  serializerCtx,
 } from '@milkdown/core';
 import { commonmark, headingIdGenerator } from '@milkdown/preset-commonmark';
 import { gfm } from '@milkdown/preset-gfm';
@@ -22,13 +24,55 @@ import './style.css';
 import { parseFrontmatter } from './frontmatter';
 import { installBrokenImageFallback } from './broken-image-fallback';
 
+// Issue #91 / AC 5.6 — Per-host viewer state for byte-equal frontmatter
+// round-trips. We capture the raw frontmatter block at mount time so
+// `getViewerMarkdown` can prepend it verbatim (no YAML re-emit, no
+// trim) ahead of the live ProseMirror body. Keyed by the host element
+// so multiple mounts in the same DOM stay independent.
+const mountedViewers = new WeakMap<
+  HTMLElement,
+  { editor: Editor; frontmatter: string | null }
+>();
+
+// Issue #91 / AC 5.6 — Capture the frontmatter-shaped prefix even when
+// the YAML inside is malformed. `parseFrontmatter` returns
+// `{frontmatter: null, body: original}` on YAML errors so the read-view
+// metadata panel doesn't render — but for the round-trip getter we
+// still want the original `---\n...\n---\n` block to come back out
+// byte-equal, since Milkdown's serializer would otherwise re-emit the
+// fences as `***` (thematic break) and escape characters like `[` to
+// `\[`. When `parseFrontmatter` succeeds, we use its capture verbatim;
+// when it returns null but the structural fences are present, we
+// fall back to a structural slice with no YAML validation.
+function captureFrontmatterPrefix(text: string): {
+  frontmatter: string | null;
+  body: string;
+} {
+  const parsed = parseFrontmatter(text);
+  if (parsed.frontmatter !== null) {
+    return { frontmatter: parsed.frontmatter, body: parsed.body };
+  }
+  if (text.startsWith('---\n')) {
+    const closingFenceRe = /\n---[ \t]*\n/;
+    const match = closingFenceRe.exec(text);
+    if (match && match.index >= 4) {
+      const fenceEnd = match.index + match[0].length;
+      return {
+        frontmatter: text.slice(0, fenceEnd),
+        body: text.slice(fenceEnd),
+      };
+    }
+  }
+  return { frontmatter: null, body: text };
+}
+
 export async function mountViewer(
   host: HTMLElement,
   content: string,
 ): Promise<Editor> {
   // Strip frontmatter so the YAML fences don't render as a thematic
   // break / setext-underlined heading inside the editor body.
-  const { body } = parseFrontmatter(content);
+  const { frontmatter, body } = captureFrontmatterPrefix(content);
 
   const editor = await Editor.make()
     .config((ctx) => {
@@ -70,7 +114,25 @@ export async function mountViewer(
     .create();
   sanitizeUrlAttributes(host);
   installBrokenImageFallback(host);
+  mountedViewers.set(host, { editor, frontmatter });
   return editor;
+}
+
+// Issue #91 / AC 5.6 — Round-trip getter. Returns the markdown buffer
+// currently represented by the viewer mounted in `host`: the captured
+// raw frontmatter (verbatim, including fences and any trailing
+// whitespace) prepended to the live ProseMirror body serialized via
+// Milkdown's `serializerCtx`. Returns `null` when no viewer is mounted
+// in `host` so a "save before mount" misuse fails loudly.
+export function getViewerMarkdown(host: HTMLElement): string | null {
+  const entry = mountedViewers.get(host);
+  if (!entry) return null;
+  const body = entry.editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const serializer = ctx.get(serializerCtx);
+    return serializer(view.state.doc);
+  });
+  return (entry.frontmatter ?? '') + body;
 }
 
 // Critical fix #1 — XSS scheme rejection. Milkdown's commonmark + gfm
