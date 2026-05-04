@@ -7,12 +7,34 @@
 
 const EXAMPLE_HREF = '?repo=deanchanter/Hashly&path=README.md';
 
+// Issue #90 / fix #7 — wordmark carry-over. Each web-mode surface owns
+// its own wordmark since bootstrap strips the static `.hashly-titlebar`
+// from index.html. Markup mirrors the v0.2 `index.html` (issue #46) so
+// the gold # / ink "hashly" CSS hooks already in src/style.css apply.
+function appendWordmark(parent: HTMLElement): void {
+  const wordmark = document.createElement('span');
+  wordmark.className = 'hashly-wordmark';
+  wordmark.setAttribute('aria-label', 'hashly');
+  const hash = document.createElement('span');
+  hash.className = 'hashly-wordmark__hash';
+  hash.setAttribute('aria-hidden', 'true');
+  hash.textContent = '#';
+  const name = document.createElement('span');
+  name.className = 'hashly-wordmark__name';
+  name.textContent = 'hashly';
+  wordmark.appendChild(hash);
+  wordmark.appendChild(name);
+  parent.appendChild(wordmark);
+}
+
 export function renderLanding(host: HTMLElement, error?: string): void {
   // Hard clear — same contract as `renderFileError`.
   host.innerHTML = '';
 
   const wrap = document.createElement('div');
   wrap.className = 'viewer-landing';
+
+  appendWordmark(wrap);
 
   if (error !== undefined) {
     const alert = document.createElement('div');
