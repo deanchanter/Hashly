@@ -18,6 +18,7 @@ import {
 import { commonmark } from '@milkdown/preset-commonmark';
 import { gfm } from '@milkdown/preset-gfm';
 import '@milkdown/prose/view/style/prosemirror.css';
+import './style.css';
 import { parseFrontmatter } from './frontmatter';
 
 export async function mountViewer(
