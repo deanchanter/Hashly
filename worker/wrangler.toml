@@ -1,0 +1,14 @@
+name = "hashly-worker"
+main = "src/index.ts"
+compatibility_date = "2025-05-01"
+
+# Routes will be configured at deploy time; placeholder only.
+# routes = [
+#   { pattern = "api.hashly.dev/*", zone_name = "hashly.dev" }
+# ]
+
+# Session storage. Real KV namespace IDs are wired up at deploy time;
+# the test harness mocks this binding via @cloudflare/vitest-pool-workers.
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "PLACEHOLDER_KV_ID"
