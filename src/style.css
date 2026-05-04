@@ -317,3 +317,100 @@ body {
   color: var(--paper);
   border-color: var(--accent);
 }
+
+/* Issue #90 / fix #6 — web-mode viewer surfaces.
+ * Brand-aligned styling for the AC 4.1–4.7 hooks. All values come from
+ * the brand palette tokens so `prefers-color-scheme: dark` rebinds
+ * automatically — no raw hex literals here (matches the v0.2
+ * `.hashly-broken-image` contract). */
+
+.viewer-landing {
+  max-width: 560px;
+  margin: 4rem auto;
+  padding: 2rem 2.25rem;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+.viewer-landing h1 {
+  font-family: var(--font-display);
+  color: var(--ink);
+  margin: 0 0 1rem 0;
+}
+
+.viewer-landing a {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.viewer-landing__error {
+  margin: 0 0 1.25rem 0;
+  padding: 0.6rem 0.9rem;
+  background: var(--paper);
+  border: 1px solid var(--accent-2);
+  border-radius: 4px;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+
+.viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-2);
+  color: var(--ink-2);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+
+.viewer-header__coords {
+  flex: 1;
+  min-width: 0;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+}
+
+.viewer-header__github-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.viewer-header__github-link:hover {
+  color: var(--accent-2);
+  text-decoration: underline;
+}
+
+.viewer-error {
+  max-width: 560px;
+  margin: 4rem auto;
+  padding: 1.5rem 1.75rem;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--muted);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+.viewer-error--not-found,
+.viewer-error--forbidden {
+  border-left-color: var(--accent-2);
+}
+
+.viewer-error--network {
+  border-left-color: var(--muted);
+}
+
+.viewer-error--other {
+  border-left-color: var(--accent);
+}
