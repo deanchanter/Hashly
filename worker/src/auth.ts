@@ -2,11 +2,16 @@
 //
 // AC 3.4 — `GET /auth/start`: mint a CSRF-bearing `state` nonce, set it as a
 // short-lived secure cookie, and 302 the browser to GitHub's install URL.
+// AC 3.5 — `GET /auth/callback`: CSRF-gate, exchange the install for an
+// access token, store it server-side in KV, and hand the browser back an
+// opaque session cookie.
 
 import type { Env } from "./env";
 
 const STATE_COOKIE_NAME = "hashly_oauth_state";
+const SESSION_COOKIE_NAME = "hashly_session";
 const STATE_COOKIE_MAX_AGE_SECONDS = 600; // 10 minutes — short-lived per AC.
+const SESSION_COOKIE_MAX_AGE_SECONDS = 3600; // 1h — matches GH install token lifetime.
 
 /** Parse a `Cookie` request header into a name→value map. */
 function parseCookieHeader(header: string | null): Record<string, string> {
@@ -32,15 +37,86 @@ function base64UrlEncode(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** Mint a fresh CSRF state nonce — 24 random bytes → 32 char base64url string. */
-function mintState(): string {
+/** Standard base64 → Uint8Array. */
+function base64Decode(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/** Mint a fresh CSRF state / session nonce — 24 random bytes → 32 char base64url. */
+function mintNonce(): string {
   const buf = new Uint8Array(24);
   crypto.getRandomValues(buf);
   return base64UrlEncode(buf);
 }
 
+/** Strip PEM armor and base64-decode the inner DER (PKCS#8). */
+function pemToPkcs8(pem: string): Uint8Array {
+  const body = pem
+    .replace(/-----BEGIN [^-]+-----/g, "")
+    .replace(/-----END [^-]+-----/g, "")
+    .replace(/\s+/g, "");
+  return base64Decode(body);
+}
+
+/**
+ * Build and sign a GitHub App JWT for installation-token exchange.
+ * Per GitHub: RS256, claims `{iat, exp, iss}`, `iss` is the App's numeric ID,
+ * `iat` may be backdated 60s for clock skew, `exp` ≤ 10 minutes ahead.
+ */
+async function makeAppJwt(appId: string, privateKeyPem: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "RS256", typ: "JWT" };
+  const payload = { iat: now - 60, exp: now + 9 * 60, iss: appId };
+  const enc = new TextEncoder();
+  const headerSeg = base64UrlEncode(enc.encode(JSON.stringify(header)));
+  const payloadSeg = base64UrlEncode(enc.encode(JSON.stringify(payload)));
+  const signingInput = `${headerSeg}.${payloadSeg}`;
+
+  const keyBytes = pemToPkcs8(privateKeyPem);
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    keyBytes,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sigBuf = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, enc.encode(signingInput));
+  const sigSeg = base64UrlEncode(new Uint8Array(sigBuf));
+  return `${signingInput}.${sigSeg}`;
+}
+
+interface InstallTokenResponse {
+  token: string;
+  expires_at: string;
+}
+
+/** POST to GitHub's installation-token endpoint and return the parsed token. */
+async function exchangeInstallationToken(
+  installationId: string,
+  appJwt: string,
+): Promise<InstallTokenResponse> {
+  const res = await fetch(
+    `https://api.github.com/app/installations/${installationId}/access_tokens`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${appJwt}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "hashly-worker",
+      },
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`installation token exchange failed: ${res.status}`);
+  }
+  return (await res.json()) as InstallTokenResponse;
+}
+
 export async function handleAuthStart(_request: Request, env: Env): Promise<Response> {
-  const state = mintState();
+  const state = mintNonce();
   const slug = env.GITHUB_APP_SLUG;
   const location = `https://github.com/apps/${slug}/installations/new?state=${state}`;
 
@@ -62,13 +138,16 @@ export async function handleAuthStart(_request: Request, env: Env): Promise<Resp
 }
 
 /**
- * AC 3.5a — CSRF gate for `GET /auth/callback`.
+ * AC 3.5 — `GET /auth/callback`.
  *
- * Rejects with 400 if the `state` cookie minted at `/auth/start` is missing,
- * empty, or does not match the `state` query param GitHub redirected back
- * with. Returns a fixed error string — never echoes attacker-controlled input.
+ * 1. CSRF gate: state cookie must be present + non-empty + match URL state.
+ * 2. Exchange installation_id for a GH App access token via signed JWT.
+ * 3. Mint an opaque session ID, store {access_token, ...} in KV under it.
+ * 4. Issue `hashly_session` cookie + clear `hashly_oauth_state`. 302 to "/".
+ *
+ * The access token NEVER appears in any cookie value or response body.
  */
-export async function handleAuthCallback(request: Request, _env: Env): Promise<Response> {
+export async function handleAuthCallback(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const urlState = url.searchParams.get("state");
   const cookies = parseCookieHeader(request.headers.get("Cookie"));
@@ -78,6 +157,45 @@ export async function handleAuthCallback(request: Request, _env: Env): Promise<R
     return new Response("invalid state", { status: 400 });
   }
 
-  // Slice 3b will land token exchange + session cookie + redirect here.
-  return new Response("ok", { status: 200 });
+  const installationId = url.searchParams.get("installation_id") ?? "";
+
+  // Exchange the App JWT for an installation access token.
+  const appJwt = await makeAppJwt(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
+  const tokenResponse = await exchangeInstallationToken(installationId, appJwt);
+
+  // Mint an opaque session ID and store the token server-side.
+  const sessionId = mintNonce();
+  await env.SESSIONS.put(
+    sessionId,
+    JSON.stringify({
+      access_token: tokenResponse.token,
+      installation_id: installationId,
+      expires_at: tokenResponse.expires_at,
+    }),
+    { expirationTtl: SESSION_COOKIE_MAX_AGE_SECONDS },
+  );
+
+  const sessionCookie =
+    `${SESSION_COOKIE_NAME}=${sessionId}` +
+    `; HttpOnly` +
+    `; Secure` +
+    `; SameSite=Lax` +
+    `; Path=/` +
+    `; Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`;
+
+  // Single-use nonce — clear the state cookie now that callback succeeded.
+  const clearStateCookie =
+    `${STATE_COOKIE_NAME}=` +
+    `; HttpOnly` +
+    `; Secure` +
+    `; SameSite=Lax` +
+    `; Path=/` +
+    `; Max-Age=0`;
+
+  const headers = new Headers();
+  headers.set("Location", "/");
+  headers.append("Set-Cookie", sessionCookie);
+  headers.append("Set-Cookie", clearStateCookie);
+
+  return new Response(null, { status: 302, headers });
 }
