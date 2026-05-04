@@ -14,7 +14,7 @@ const STATE_COOKIE_MAX_AGE_SECONDS = 600; // 10 minutes — short-lived per AC.
 const SESSION_COOKIE_MAX_AGE_SECONDS = 3600; // 1h — matches GH install token lifetime.
 
 /** Parse a `Cookie` request header into a name→value map. */
-function parseCookieHeader(header: string | null): Record<string, string> {
+export function parseCookieHeader(header: string | null): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
   for (const part of header.split(";")) {
