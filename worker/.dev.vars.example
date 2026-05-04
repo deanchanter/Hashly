@@ -3,6 +3,7 @@
 
 # GitHub App credentials (used when AUTH_METHOD=app, the default)
 GITHUB_APP_ID=
+GITHUB_APP_SLUG=
 GITHUB_APP_PRIVATE_KEY=
 
 # GitHub OAuth App credentials (used when AUTH_METHOD=oauth-app)

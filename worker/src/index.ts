@@ -1,13 +1,17 @@
 // Hashly Worker entrypoint — module-worker default export.
-//
-// Currently implements only the smoke endpoint required by AC 3.9. Subsequent
-// ACs will introduce auth, session, and GitHub-proxy routes.
+import { handleAuthStart } from "./auth";
+import type { Env } from "./env";
+
 export default {
-  async fetch(request: Request, _env: unknown, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname === "/health" && request.method === "GET") {
       return new Response("ok", { status: 200 });
+    }
+
+    if (url.pathname === "/auth/start" && request.method === "GET") {
+      return handleAuthStart(request, env);
     }
 
     return new Response("not found", { status: 404 });
