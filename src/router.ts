@@ -71,7 +71,36 @@ export function parseSpecUrl(href: string): ParseSpecUrlResult {
     if (rawRef.length === 0) {
       return { error: '`ref` query parameter must not be empty when present' };
     }
-    ref = rawRef;
+    let decodedRef: string;
+    try {
+      decodedRef = decodeURIComponent(rawRef);
+    } catch {
+      return { error: '`ref` is not valid URI-encoded text' };
+    }
+    if (decodedRef.length === 0) {
+      return { error: '`ref` query parameter must not be empty when present' };
+    }
+    // Critical fix iteration 2 — `ref` charset hardening. Reject any
+    // char outside the github-realistic set so `<script>`, control
+    // chars, spaces, `?`, `#`, etc. fail at parse time and never reach
+    // the viewer header textContent or the composed fetch URL.
+    if (!/^[A-Za-z0-9._/-]+$/.test(decodedRef)) {
+      return {
+        error:
+          '`ref` may only contain alphanumerics and `.`, `_`, `-`, `/`',
+      };
+    }
+    // Critical fix iteration 2 — `ref` traversal hardening. Same shape
+    // as the path check above: URL normalization collapses `..` / `.` /
+    // empty segments BEFORE the HTTP request, which would silently
+    // retarget the fetch at a different repo while the viewer header
+    // still shows the trusted one.
+    for (const segment of decodedRef.split('/')) {
+      if (segment === '' || segment === '.' || segment === '..') {
+        return { error: '`ref` must not contain `.`, `..`, or empty segments' };
+      }
+    }
+    ref = decodedRef;
   } else {
     ref = 'main';
   }

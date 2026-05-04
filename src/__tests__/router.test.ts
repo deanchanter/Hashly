@@ -357,3 +357,243 @@ describe('Issue #90 / Critical fix #2 — path-traversal rejection in parseSpecU
     expect((result as { path: string }).path).toBe('specs/v0.3-web-pivot/spec.md');
   });
 });
+
+// Critical fix iteration 2 (security) — `ref` traversal + charset
+// hardening.
+//
+// Round 1's fix #2 closed `path` traversal but left `ref` wide open.
+// The same kill chain works through `ref`:
+//
+//   ?repo=trusted/repo&path=README.md&ref=main/../../../attacker/malrepo/main
+//
+// `parseSpecUrl` accepts this; `fetchSpec` composes
+//   https://raw.githubusercontent.com/trusted/repo/main/../../../attacker/malrepo/main/README.md
+// which the browser normalizes BEFORE the HTTP request to
+//   https://raw.githubusercontent.com/attacker/malrepo/main/README.md
+// — silent origin spoof, viewer header still showing `trusted/repo`.
+//
+// Bundled with the charset-tightening half of a round-1 non-critical:
+// reject any `ref` containing characters outside the github-realistic
+// `[A-Za-z0-9._/-]` set so `ref=<script>`, `ref=main?evil=1`,
+// `ref=main#frag`, control chars, spaces all fail at parse time.
+//
+// Branch names like `release/v1.2` are valid (slash separators), so
+// `ref` must validate per-segment, not as a single token.
+
+describe('Issue #90 / Critical fix iteration 2 — `ref` traversal + charset hardening', () => {
+  it('rejects a `ref` containing a `..` segment (parent-directory traversal)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=main/../../../attacker/malrepo/main',
+    );
+    expect(
+      result,
+      'expected `..` segment in ref to be rejected — silent origin spoof otherwise (browser URL normalization collapses `..` before the HTTP request).',
+    ).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a `ref` containing a `.` segment (current-directory)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=main/./feature',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a `ref` that is exactly `..`', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl('?repo=trusted/repo&path=README.md&ref=..');
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a `ref` starting with `/` (leading slash creates an empty first segment)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=/main',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a `ref` ending with `/` (trailing slash creates an empty last segment)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=main/',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a `ref` with consecutive `//` (empty middle segment)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=release//v1.2',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a percent-encoded `..` in `ref` (`%2E%2E` after URI decode)', async () => {
+    // Decode-then-validate: `%2E%2E` decodes to `..`, which then
+    // fails the segment check. Pin so a future regression that
+    // validates pre-decode would let the encoded form through.
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=main/%2E%2E/attacker',
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a `ref` containing a space', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=' + encodeURIComponent('main branch'),
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a `ref` containing `<` / `>` / control chars (charset tightening)', async () => {
+    // Defense-in-depth: even though these would never reach
+    // raw.githubusercontent.com cleanly, rejecting them at parse
+    // time means the viewer-header textContent never displays
+    // user-supplied `<` / `>` / NUL bytes either.
+    const { parseSpecUrl } = await import('../router');
+    const cases = ['<script>', '%00', '%3Cscript%3E', ' '];
+    for (const bad of cases) {
+      const result = parseSpecUrl(
+        '?repo=trusted/repo&path=README.md&ref=' + encodeURIComponent(bad),
+      );
+      expect(
+        result,
+        `expected ref ${JSON.stringify(bad)} (rejecting after URI decode) to be rejected on charset.`,
+      ).toHaveProperty('error');
+    }
+  });
+
+  it('rejects a `ref` containing `?` (would be parsed as a query separator in the composed URL)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=' + encodeURIComponent('main?evil=1'),
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  it('rejects a `ref` containing `#` (would be parsed as a fragment in the composed URL)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=' + encodeURIComponent('main#frag'),
+    );
+    expect(result).toHaveProperty('error');
+    expect((result as { error: string }).error).toMatch(/ref/i);
+  });
+
+  // Happy-path regression pins — make sure the new validation doesn't
+  // outlaw legitimate branch / tag refs.
+
+  it('accepts a simple branch name `main`', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=main',
+    );
+    expect((result as { ref: string }).ref).toBe('main');
+  });
+
+  it('accepts a slash-separated branch name `release/v1.2`', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=release/v1.2',
+    );
+    expect((result as { ref: string }).ref).toBe('release/v1.2');
+  });
+
+  it('accepts `feature/foo-bar` (hyphenated multi-segment ref)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=feature/foo-bar',
+    );
+    expect((result as { ref: string }).ref).toBe('feature/foo-bar');
+  });
+
+  it('accepts a SemVer tag-style ref `v0.3.0`', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=v0.3.0',
+    );
+    expect((result as { ref: string }).ref).toBe('v0.3.0');
+  });
+
+  it('accepts the repo\'s actual release tag `0.2.3-bundle-signing` (dots, hyphens, mixed)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=0.2.3-bundle-signing',
+    );
+    expect((result as { ref: string }).ref).toBe('0.2.3-bundle-signing');
+  });
+
+  it('accepts `release/v1.2_rc.1` (underscores allowed)', async () => {
+    const { parseSpecUrl } = await import('../router');
+    const result = parseSpecUrl(
+      '?repo=trusted/repo&path=README.md&ref=release/v1.2_rc.1',
+    );
+    expect((result as { ref: string }).ref).toBe('release/v1.2_rc.1');
+  });
+
+  // Defense-in-depth — any accepted ref must compose into a URL that
+  // normalizes to start with `/${repo}/${ref}/`. If a malicious ref
+  // somehow slipped past the segment / charset checks, this catches
+  // the consequence: the URL fed to fetch resolves to a different
+  // repo than the one displayed in the viewer header.
+
+  it('any accepted `ref` produces a fetch URL whose normalized pathname starts with `/${repo}/${ref}/`', async () => {
+    // We feed several valid refs through `parseSpecUrl` then through
+    // `fetchSpec`'s URL composition (mirroring the implementation
+    // shape, since fetchSpec is what actually builds the URL). We
+    // then run the composed URL through `new URL(...)` — exactly
+    // what the browser does — and assert pathname survives intact.
+    const { parseSpecUrl } = await import('../router');
+
+    const cases = [
+      { ref: 'main', path: 'README.md' },
+      { ref: 'release/v1.2', path: 'specs/v0.3-web-pivot/spec.md' },
+      { ref: 'feature/foo-bar', path: 'docs/api.md' },
+      { ref: 'v0.3.0', path: 'README.md' },
+      { ref: '0.2.3-bundle-signing', path: 'CHANGELOG.md' },
+    ];
+
+    const repo = 'trusted/repo';
+    for (const { ref, path } of cases) {
+      const parsed = parseSpecUrl(
+        '?repo=' + repo + '&path=' + encodeURIComponent(path) + '&ref=' + encodeURIComponent(ref),
+      );
+      expect(
+        parsed,
+        `precondition: ref ${JSON.stringify(ref)} must parse successfully.`,
+      ).not.toHaveProperty('error');
+      const ok = parsed as { repo: string; path: string; ref: string };
+
+      const composed =
+        `https://raw.githubusercontent.com/${ok.repo}/${ok.ref}/${ok.path
+          .split('/')
+          .map((s) => encodeURIComponent(s))
+          .join('/')}`;
+      const normalized = new URL(composed);
+
+      const expectedPrefix = `/${ok.repo}/${ok.ref}/`;
+      expect(
+        normalized.pathname.startsWith(expectedPrefix),
+        `expected URL normalization to keep the pathname starting with ${JSON.stringify(expectedPrefix)} so the fetch targets the repo+ref the viewer header displays. Got pathname: ${JSON.stringify(normalized.pathname)} from composed URL: ${JSON.stringify(composed)}.`,
+      ).toBe(true);
+
+      // Sanity: the normalized URL must NOT contain `..` or `/.` —
+      // if it did, the segment check let something through.
+      expect(normalized.pathname.includes('/../')).toBe(false);
+      expect(normalized.pathname.includes('/./')).toBe(false);
+    }
+  });
+});
