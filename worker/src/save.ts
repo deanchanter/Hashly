@@ -128,54 +128,79 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
     );
   }
 
-  // Issue #92 / AC 6.2 — branch namespace `hashly/spec-edit-<timestamp>`.
-  // The `/` is intentional Git namespace convention (cf. `feature/x`,
-  // `release/y`); GitHub's POST /git/refs accepts it.
-  const branchName = `hashly/spec-edit-${Date.now()}`;
+  // Issue #92 / AC 6.6 — PR dedup within session. Cache key is
+  // (sessionId, repo, path, ref). On a second save in the same
+  // session for the same spec, reuse the existing branch and PR
+  // (push a new commit, don't open a new PR). The cache lives in
+  // the same KV namespace as auth sessions but uses an `edit:`
+  // prefix so it can't collide with auth-session IDs (those are
+  // opaque base64url, no colons).
+  const editCacheKey = `edit:${sessionId}:${repo}:${path}:${ref}`;
+  let cached: { branchName: string; prUrl: string } | null = null;
+  const storedCache = await env.SESSIONS.get(editCacheKey);
+  if (storedCache) {
+    try {
+      cached = JSON.parse(storedCache) as typeof cached;
+    } catch {
+      cached = null;
+    }
+  }
 
-  // First: GET source ref's commit SHA to base the new branch on.
-  const refResp = await fetch(
-    `https://api.github.com/repos/${repo}/git/ref/heads/${encodeURIComponent(ref)}`,
-    { headers: ghHeaders },
-  );
+  let branchName: string;
+  if (cached?.branchName) {
+    // Dedup hit — reuse the existing branch. Skip POST /git/refs
+    // (branch already upstream) and POST /pulls (PR already open).
+    branchName = cached.branchName;
+  } else {
+    // Issue #92 / AC 6.2 — branch namespace `hashly/spec-edit-<timestamp>`.
+    // The `/` is intentional Git namespace convention (cf. `feature/x`,
+    // `release/y`); GitHub's POST /git/refs accepts it.
+    branchName = `hashly/spec-edit-${Date.now()}`;
 
-  if (refResp.status === 403) {
-    return jsonResponse(
-      { ok: false, kind: "no-write", message: NO_WRITE_MESSAGE },
-      403,
+    // First: GET source ref's commit SHA to base the new branch on.
+    const refResp = await fetch(
+      `https://api.github.com/repos/${repo}/git/ref/heads/${encodeURIComponent(ref)}`,
+      { headers: ghHeaders },
     );
-  }
 
-  let refJson: { object?: { sha?: string } };
-  try {
-    refJson = (await refResp.json()) as typeof refJson;
-  } catch {
-    refJson = {};
-  }
-  const baseCommitSha = refJson?.object?.sha;
+    if (refResp.status === 403) {
+      return jsonResponse(
+        { ok: false, kind: "no-write", message: NO_WRITE_MESSAGE },
+        403,
+      );
+    }
 
-  // Try to create the branch ref. If GitHub forbids it, that's the
-  // canonical no-write signal.
-  const createBranchResp = await fetch(
-    `https://api.github.com/repos/${repo}/git/refs`,
-    {
-      method: "POST",
-      headers: ghHeaders,
-      body: JSON.stringify({
-        ref: `refs/heads/${branchName}`,
-        sha: baseCommitSha ?? "",
-      }),
-    },
-  );
+    let refJson: { object?: { sha?: string } };
+    try {
+      refJson = (await refResp.json()) as typeof refJson;
+    } catch {
+      refJson = {};
+    }
+    const baseCommitSha = refJson?.object?.sha;
 
-  if (createBranchResp.status === 403) {
-    return jsonResponse(
-      { ok: false, kind: "no-write", message: NO_WRITE_MESSAGE },
-      403,
+    // Try to create the branch ref. If GitHub forbids it, that's the
+    // canonical no-write signal.
+    const createBranchResp = await fetch(
+      `https://api.github.com/repos/${repo}/git/refs`,
+      {
+        method: "POST",
+        headers: ghHeaders,
+        body: JSON.stringify({
+          ref: `refs/heads/${branchName}`,
+          sha: baseCommitSha ?? "",
+        }),
+      },
     );
+
+    if (createBranchResp.status === 403) {
+      return jsonResponse(
+        { ok: false, kind: "no-write", message: NO_WRITE_MESSAGE },
+        403,
+      );
+    }
   }
 
-  // PUT contents on the new branch.
+  // PUT contents on the (new or cached) branch.
   const putResp = await fetch(
     `https://api.github.com/repos/${repo}/contents/${path}`,
     {
@@ -196,7 +221,12 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
     );
   }
 
-  // POST a PR for the new branch.
+  if (cached) {
+    // Dedup path — reuse the cached PR URL, no POST /pulls.
+    return jsonResponse({ ok: true, prUrl: cached.prUrl }, 200);
+  }
+
+  // POST a PR for the freshly-created branch.
   const prResp = await fetch(`https://api.github.com/repos/${repo}/pulls`, {
     method: "POST",
     headers: ghHeaders,
@@ -221,6 +251,22 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
   } catch {
     prJson = {};
   }
+  const prUrl = prJson?.html_url ?? "";
 
-  return jsonResponse({ ok: true, prUrl: prJson?.html_url ?? "" }, 200);
+  // Persist the dedup record so a subsequent save in this session
+  // for the same spec reuses this branch + PR (AC 6.6). TTL matches
+  // the session cookie's max age (~1h) so stale records can't
+  // outlive the session.
+  try {
+    await env.SESSIONS.put(
+      editCacheKey,
+      JSON.stringify({ branchName, prUrl }),
+      { expirationTtl: 3600 },
+    );
+  } catch {
+    // KV write errors are non-fatal — the user still gets the PR
+    // URL on this save; only future dedup is impacted.
+  }
+
+  return jsonResponse({ ok: true, prUrl }, 200);
 }
