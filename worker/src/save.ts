@@ -16,6 +16,80 @@ const SESSION_COOKIE_NAME = "hashly_session";
 const NO_WRITE_MESSAGE =
   "You don't have write access to this repository — ask the dev to add you as a collaborator (or install the Hashly GitHub App on the repo).";
 
+// fix-loop iter-1 / fix #11 — input size caps. Markdown specs aren't
+// huge; commitMessage rides in a single git header line.
+const CONTENT_MAX_BYTES = 1024 * 1024; // 1 MiB
+const COMMIT_MESSAGE_MAX_BYTES = 1024; // 1 KiB
+
+// fix-loop iter-1 / fix #5 — server-side validators mirror
+// `src/router.ts`'s parseSpecUrl. The frontend's parser is not a
+// defense for the worker (an attacker can craft a request directly
+// against /api/save).
+const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+const REF_CHARSET_RE = /^[A-Za-z0-9._/-]+$/;
+const BASE_SHA_RE = /^[a-f0-9]{40}$/;
+
+function hasTraversalSegment(s: string): boolean {
+  for (const segment of s.split("/")) {
+    if (segment === "" || segment === "." || segment === "..") return true;
+  }
+  return false;
+}
+
+function validateSaveBody(body: {
+  repo?: unknown;
+  path?: unknown;
+  ref?: unknown;
+  content?: unknown;
+  baseSha?: unknown;
+  commitMessage?: unknown;
+}): { ok: true } | { ok: false; message: string } {
+  const { repo, path, ref, content, baseSha, commitMessage } = body;
+
+  if (typeof repo !== "string" || !REPO_RE.test(repo)) {
+    return { ok: false, message: "Invalid repo (must be `owner/name`)." };
+  }
+  if (typeof path !== "string" || path.length === 0) {
+    return { ok: false, message: "Missing path." };
+  }
+  if (path.startsWith("/")) {
+    return { ok: false, message: "Path must be repo-relative (no leading `/`)." };
+  }
+  if (hasTraversalSegment(path)) {
+    return { ok: false, message: "Path must not contain `.`, `..`, or empty segments." };
+  }
+  if (typeof ref !== "string" || ref.length === 0) {
+    return { ok: false, message: "Missing ref." };
+  }
+  if (!REF_CHARSET_RE.test(ref)) {
+    return { ok: false, message: "Ref contains invalid characters." };
+  }
+  if (hasTraversalSegment(ref)) {
+    return { ok: false, message: "Ref must not contain `.`, `..`, or empty segments." };
+  }
+  if (typeof baseSha !== "string" || !BASE_SHA_RE.test(baseSha)) {
+    return { ok: false, message: "Invalid baseSha (must be lowercase 40-char hex)." };
+  }
+  if (typeof content !== "string") {
+    return { ok: false, message: "Missing content." };
+  }
+  if (content.length > CONTENT_MAX_BYTES) {
+    return { ok: false, message: "Content exceeds 1 MiB limit." };
+  }
+  if (commitMessage !== undefined) {
+    if (typeof commitMessage !== "string") {
+      return { ok: false, message: "commitMessage must be a string." };
+    }
+    if (commitMessage.length > COMMIT_MESSAGE_MAX_BYTES) {
+      return { ok: false, message: "commitMessage exceeds 1 KiB limit." };
+    }
+    if (/[\r\n]/.test(commitMessage)) {
+      return { ok: false, message: "commitMessage must not contain CR or LF." };
+    }
+  }
+  return { ok: true };
+}
+
 interface SessionRecord {
   access_token: string;
   installation_id?: string;
@@ -39,6 +113,19 @@ function jsonResponse(body: unknown, status: number): Response {
 }
 
 export async function handleSave(request: Request, env: Env): Promise<Response> {
+  // fix-loop iter-1 / fix #12 — Origin gate. /api/save is a write
+  // endpoint with the same exposure as the /auth gate from #111: a
+  // cross-origin POST with the session cookie riding along (SameSite=
+  // Lax permits top-level POSTs) could spoof saves. Reject any
+  // request whose Origin doesn't match the worker's own origin, AND
+  // any request without an Origin header (programmatic curl / non-
+  // browser clients shouldn't be hitting this endpoint).
+  const origin = request.headers.get("Origin");
+  const requestOrigin = new URL(request.url).origin;
+  if (!origin || origin !== requestOrigin) {
+    return new Response("forbidden: cross-origin", { status: 403 });
+  }
+
   const cookies = parseCookieHeader(request.headers.get("Cookie"));
   const sessionId = cookies[SESSION_COOKIE_NAME];
 
@@ -71,13 +158,26 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
     );
   }
 
-  const { repo, path, ref, content, baseSha, commitMessage } = body;
-  if (!repo || !path || !ref || typeof content !== "string") {
+  // fix-loop iter-1 / fix #5 + #11 — validate ALL inputs server-side
+  // BEFORE any GitHub fetch. The frontend's parseSpecUrl can't be
+  // trusted (an attacker can POST directly); validation must happen
+  // here. A regression that runs validation AFTER the fetch would
+  // still 4xx but would have leaked the bad path upstream first.
+  const validation = validateSaveBody(body);
+  if (!validation.ok) {
     return jsonResponse(
-      { ok: false, kind: "other", message: "Missing required fields." },
+      { ok: false, kind: "other", message: validation.message },
       400,
     );
   }
+  const { repo, path, ref, content, baseSha, commitMessage } = body as {
+    repo: string;
+    path: string;
+    ref: string;
+    content: string;
+    baseSha: string;
+    commitMessage?: string;
+  };
 
   const token = session.access_token;
   const ghHeaders = {

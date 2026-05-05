@@ -78,7 +78,12 @@ async function postSave(
   body: SaveBody | Record<string, unknown>,
   opts: { cookie?: string } = {},
 ): Promise<Response> {
-  const headers: HeadersInit = { "content-type": "application/json" };
+  // Origin header matches the SELF.fetch URL's origin so the AC 6.7
+  // tests stay green under fix #12's same-origin gate.
+  const headers: HeadersInit = {
+    "content-type": "application/json",
+    "Origin": "https://worker.test",
+  };
   if (opts.cookie !== undefined) headers["Cookie"] = opts.cookie;
   return SELF.fetch("https://worker.test/api/save", {
     method: "POST",
@@ -107,7 +112,7 @@ function mockGithubReadsHappy(): void {
     .reply(
       200,
       JSON.stringify({
-        sha: "BASE_SHA_MATCHES",
+        sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         path: "specs/spec.md",
         content: btoa("original content\n"),
         encoding: "base64",
@@ -198,7 +203,7 @@ describe("POST /api/save — auth gate (Issue #92 / AC 6.7 cross-pin)", () => {
       path: "specs/spec.md",
       ref: "main",
       content: "edited\n",
-      baseSha: "BASE_SHA_MATCHES",
+      baseSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     });
     expect(
       res.status,
@@ -213,7 +218,7 @@ describe("POST /api/save — auth gate (Issue #92 / AC 6.7 cross-pin)", () => {
         path: "specs/spec.md",
         ref: "main",
         content: "edited\n",
-        baseSha: "BASE_SHA_MATCHES",
+        baseSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
       { cookie: `${SESSION_COOKIE_NAME}=this-id-does-not-exist-in-kv` },
     );
@@ -239,7 +244,7 @@ describe("POST /api/save — no-write translation (Issue #92 / AC 6.7)", () => {
         path: "specs/spec.md",
         ref: "main",
         content: "edited content\n",
-        baseSha: "BASE_SHA_MATCHES",
+        baseSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
       { cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}` },
     );
@@ -283,7 +288,7 @@ describe("POST /api/save — no-write translation (Issue #92 / AC 6.7)", () => {
         path: "specs/spec.md",
         ref: "main",
         content: "edited content\n",
-        baseSha: "BASE_SHA_MATCHES",
+        baseSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
       { cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}` },
     );
@@ -308,7 +313,7 @@ describe("POST /api/save — no-write translation (Issue #92 / AC 6.7)", () => {
         path: "specs/spec.md",
         ref: "main",
         content: "edited content\n",
-        baseSha: "BASE_SHA_MATCHES",
+        baseSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
       { cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}` },
     );
@@ -331,7 +336,7 @@ describe("POST /api/save — no-write translation (Issue #92 / AC 6.7)", () => {
         path: "specs/spec.md",
         ref: "main",
         content: "edited content\n",
-        baseSha: "BASE_SHA_MATCHES",
+        baseSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       },
       { cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}` },
     );

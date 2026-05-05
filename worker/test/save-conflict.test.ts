@@ -52,9 +52,12 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 const SESSION_COOKIE_NAME = "hashly_session";
 const SESSION_ID = "save-conflict-session-32chars-www";
 const ACCESS_TOKEN = "ghs_save_conflict_test_token_DO_NOT_LEAK";
-const CLIENT_BASE_SHA = "client_captured_sha_at_edit_start_aaaa";
-const NEW_REMOTE_SHA = "remote_advanced_after_edit_started_bbbb";
-const SOURCE_REF_COMMIT_SHA = "source_ref_commit_sha_for_conflict_test";
+// 40-char lowercase-hex SHAs — match GitHub's actual blob/commit SHA
+// shape so the AC 6.4 tests stay green under fix #5's strict
+// `^[a-f0-9]{40}$` baseSha validation.
+const CLIENT_BASE_SHA = "1111111111111111111111111111111111111111";
+const NEW_REMOTE_SHA = "2222222222222222222222222222222222222222";
+const SOURCE_REF_COMMIT_SHA = "3333333333333333333333333333333333333333";
 
 interface CapturedCall {
   path: string;
@@ -218,6 +221,8 @@ async function postSave(body: SaveBody): Promise<Response> {
     method: "POST",
     headers: {
       "content-type": "application/json",
+      // Origin matches SELF URL — keeps green under fix #12.
+      "Origin": "https://worker.test",
       "Cookie": `${SESSION_COOKIE_NAME}=${SESSION_ID}`,
     },
     body: JSON.stringify(body),

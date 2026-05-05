@@ -230,6 +230,8 @@ async function postSave(
     method: "POST",
     headers: {
       "content-type": "application/json",
+      // Origin matches SELF URL — keeps green under fix #12 same-origin gate.
+      Origin: "https://worker.test",
       Cookie: `${SESSION_COOKIE_NAME}=${opts.sessionId}`,
     },
     body: JSON.stringify(body),

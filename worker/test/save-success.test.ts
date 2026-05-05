@@ -226,7 +226,11 @@ async function postSave(
   body: SaveBody,
   opts: { cookie?: string } = {},
 ): Promise<Response> {
-  const headers: HeadersInit = { "content-type": "application/json" };
+  const headers: HeadersInit = {
+    "content-type": "application/json",
+    // Origin matches SELF URL — keeps green under fix #12 same-origin gate.
+    "Origin": "https://worker.test",
+  };
   if (opts.cookie !== undefined) headers["Cookie"] = opts.cookie;
   return SELF.fetch("https://worker.test/api/save", {
     method: "POST",
