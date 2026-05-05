@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Hashly** — a free, WYSIWYG markdown reader/editor for Spec-Driven Development workflows. v0.3 is a web app at <https://hashly.pages.dev>: paste a GitHub spec link as a URL parameter, edit WYSIWYG, save → opens a pull request on the source repo. Frontend is Vite + TypeScript + [Milkdown](https://milkdown.dev/); backend is a Cloudflare Worker holding GitHub App credentials.
+**Hashly** — a free, WYSIWYG markdown reader/editor for Spec-Driven Development workflows. v0.3 is a web app at <https://hashly-md.pages.dev>: paste a GitHub spec link as a URL parameter, edit WYSIWYG, save → opens a pull request on the source repo. Frontend is Vite + TypeScript + [Milkdown](https://milkdown.dev/); backend is a Cloudflare Worker holding GitHub App credentials.
 
 The desktop app (Tauri-based, macOS only) was sunset in v0.3. v0.2.3 was the final desktop release; the `src-tauri/` crate remains in the repo for rollback safety but is no longer in the active build path. Full deletion is a post-merge follow-up to #95 once v0.3 has shipped green for one week. The repo was previously named `pomodoro`; update any stale references.
 

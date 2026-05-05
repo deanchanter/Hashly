@@ -6,13 +6,13 @@ Run before merging the v0.3 milestone PR (or before flipping the marketing annou
 
 ## Prerequisites
 
-- [ ] Worker deployed to `hashly.pages.dev` (or staging route) with all secrets set per #98 external-action checklist (App ID, App private key, OAuth client ID/secret, session HMAC key, real KV namespace ID).
+- [ ] Worker deployed to `hashly-md.pages.dev` (or staging route) with all secrets set per #98 external-action checklist (App ID, App private key, OAuth client ID/secret, session HMAC key, real KV namespace ID).
 - [ ] Hashly GitHub App installed on at least one test repo with public spec(s).
 - [ ] At least one test account with write access to the test repo, and one without.
 
 ## Anonymous read flow (AC 4.x)
 
-- [ ] Open `https://hashly.pages.dev/?repo=<test-repo>&path=<spec-path>` in a fresh incognito window.
+- [ ] Open `https://hashly-md.pages.dev/?repo=<test-repo>&path=<spec-path>` in a fresh incognito window.
 - [ ] Confirm: viewer renders the spec content with v0.2 polish (GFM tables, fenced code blocks styled, list rhythm, H1 underline, frontmatter recognized).
 - [ ] Confirm: persistent header shows `<repo> · <path> @ <ref>` with a working "View on GitHub" link in the top-right.
 - [ ] Confirm: `#hashly` wordmark visible.
@@ -68,7 +68,7 @@ Run before merging the v0.3 milestone PR (or before flipping the marketing annou
 
 ## Iframe embed (AC 4.8)
 
-- [ ] Create a small HTML page on a different origin with `<iframe src="https://hashly.pages.dev/?repo=...&path=..." width="600" height="400">`.
+- [ ] Create a small HTML page on a different origin with `<iframe src="https://hashly-md.pages.dev/?repo=...&path=..." width="600" height="400">`.
 - [ ] Open that page; verify: viewer renders inside the iframe without horizontal scrollbar at 600px width.
 - [ ] Verify: persistent header coords (`<repo> · <path> @ <ref>`) truncate with ellipsis if too long, do not overflow.
 
@@ -81,4 +81,4 @@ Run before merging the v0.3 milestone PR (or before flipping the marketing annou
 
 - [ ] Inspect any /api/save response body: verify no installation token, no session token, no private user data appears.
 - [ ] Inspect cookies via DevTools: verify `hashly_session` cookie has HttpOnly, Secure, SameSite=Lax, sensible Max-Age.
-- [ ] Try to POST `/api/save` from a different origin (e.g., `fetch('https://hashly.pages.dev/api/save', ...)` from a different domain's browser console): verify 403 (Origin gate).
+- [ ] Try to POST `/api/save` from a different origin (e.g., `fetch('https://hashly-md.pages.dev/api/save', ...)` from a different domain's browser console): verify 403 (Origin gate).

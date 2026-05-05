@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 //   [click me](vbscript:...)
 //   ![alt](javascript:alert(1))         ← image src is the same vector
 //
-// Click → JS executes on the viewer's origin (hashly.pages.dev),
+// Click → JS executes on the viewer's origin (hashly-md.pages.dev),
 // with access to the user's session, cookies, etc. Combined with
 // the path-traversal finding (fix #2), this was a full kill chain.
 //

@@ -1,16 +1,16 @@
 # Hashly
 
-A free, WYSIWYG markdown reader and editor for [Spec-Driven Development](https://specdriven.dev/) workflows. v0.3 is a web app at **<https://hashly.pages.dev>** — paste a GitHub spec link in the URL and edit it WYSIWYG; saving opens a pull request on the source repo.
+A free, WYSIWYG markdown reader and editor for [Spec-Driven Development](https://specdriven.dev/) workflows. v0.3 is a web app at **<https://hashly-md.pages.dev>** — paste a GitHub spec link in the URL and edit it WYSIWYG; saving opens a pull request on the source repo.
 
 ## Use
 
 Open a public-repo markdown file at:
 
 ```
-https://hashly.pages.dev/?repo=<owner>/<name>&path=<spec-path>&ref=<branch-or-sha>
+https://hashly-md.pages.dev/?repo=<owner>/<name>&path=<spec-path>&ref=<branch-or-sha>
 ```
 
-For example: <https://hashly.pages.dev/?repo=deanchanter/Hashly&path=README.md>
+For example: <https://hashly-md.pages.dev/?repo=deanchanter/Hashly&path=README.md>
 
 The viewer renders read-only with the v0.2 polish carried over (GFM tables, fenced code, list rhythm, H1 underline, broken-image fallback, frontmatter recognition, light/dark following the OS).
 
@@ -21,7 +21,7 @@ To edit, click into the document and start typing. You'll be redirected to GitHu
 The viewer works inside an `<iframe>` — useful for tutorials and courses that want to display a spec inline:
 
 ```html
-<iframe src="https://hashly.pages.dev/?repo=owner/name&path=docs/spec.md" width="600" height="400"></iframe>
+<iframe src="https://hashly-md.pages.dev/?repo=owner/name&path=docs/spec.md" width="600" height="400"></iframe>
 ```
 
 ## Desktop app (legacy)
