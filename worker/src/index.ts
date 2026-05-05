@@ -32,7 +32,11 @@ export default {
       return handleSessionStatus(request, env);
     }
 
-    if (url.pathname.startsWith("/api/github/") && request.method === "POST") {
+    // Issue #91 / AC 5.5 — Relax method guard so the perms-check path
+    // (`GET /api/github/repos/{owner}/{repo}`) reaches the proxy. The
+    // internal proxy already forwards `request.method` correctly; the
+    // auth gate (401 without session) carries through naturally.
+    if (url.pathname.startsWith("/api/github/")) {
       return handleGitHubProxy(request, env);
     }
 

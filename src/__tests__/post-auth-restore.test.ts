@@ -216,16 +216,31 @@ describe('Issue #91 / AC 5.3 — post-auth detection: bootstrapWeb auto-enters e
     sessionStorage.setItem(PENDING_EDIT_KEY, '1');
 
     // First fetch is the spec content (AC 4.3 fetchSpec); subsequent
-    // fetches are the session-status check (AC 5.2 attemptEditAction).
-    fetchSpy
-      .mockResolvedValueOnce(new Response('# Hello world\n\nbody', { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    // fetches are the session-status check (AC 5.2 attemptEditAction)
+    // and the perms check (AC 5.5). URL-aware mocking handles all
+    // three.
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        );
+      }
+      if (u.startsWith('/api/github/repos/')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+        );
+      }
+      // Default = the spec fetch (raw.githubusercontent.com URL).
+      return Promise.resolve(new Response('# Hello world\n\nbody', { status: 200 }));
+    });
 
     const { bootstrap } = await import('../main');
     bootstrap();
     // Generous settle window: mountViewer + session-status fetch +
-    // enterEditMode's destroy + remount all need to complete.
-    await new Promise((r) => setTimeout(r, 250));
+    // perms fetch + enterEditMode's destroy + remount all need to
+    // complete.
+    await new Promise((r) => setTimeout(r, 300));
 
     const pm = document.querySelector<HTMLElement>('.ProseMirror');
     expect(
@@ -248,13 +263,24 @@ describe('Issue #91 / AC 5.3 — post-auth detection: bootstrapWeb auto-enters e
     // re-enter edit mode (and prompt) until sessionStorage clears
     // organically, which is annoying.
     sessionStorage.setItem(PENDING_EDIT_KEY, '1');
-    fetchSpy
-      .mockResolvedValueOnce(new Response('# Spec', { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        );
+      }
+      if (u.startsWith('/api/github/repos/')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(new Response('# Spec', { status: 200 }));
+    });
 
     const { bootstrap } = await import('../main');
     bootstrap();
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 300));
 
     expect(
       sessionStorage.getItem(PENDING_EDIT_KEY),
@@ -365,13 +391,24 @@ describe('Issue #91 / AC 5.3 — visible prompt: "your edit was paused" surface'
     // The form factor (data-testid hook + visible) is what's pinned;
     // the exact copy / styling / role is builder discretion.
     sessionStorage.setItem(PENDING_EDIT_KEY, '1');
-    fetchSpy
-      .mockResolvedValueOnce(new Response('# Spec', { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        );
+      }
+      if (u.startsWith('/api/github/repos/')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(new Response('# Spec', { status: 200 }));
+    });
 
     const { bootstrap } = await import('../main');
     bootstrap();
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 300));
 
     const prompt = document.querySelector<HTMLElement>(
       `[data-testid="${POST_AUTH_PROMPT_TESTID}"]`,
@@ -444,13 +481,24 @@ describe('Issue #91 / AC 5.3 cross-pin — byte-equal frontmatter survives auto-
     sessionStorage.setItem(PENDING_EDIT_KEY, '1');
 
     const original = '---\ntitle: Spec\nauthor: dean\n---\n# Body\n\nprose\n';
-    fetchSpy
-      .mockResolvedValueOnce(new Response(original, { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        );
+      }
+      if (u.startsWith('/api/github/repos/')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(new Response(original, { status: 200 }));
+    });
 
     const { bootstrap } = await import('../main');
     bootstrap();
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 300));
 
     const editorHost = document.getElementById('editor')!;
     const { getViewerMarkdown } = (await import('../viewer')) as unknown as {

@@ -28,6 +28,7 @@
 
 import type { Editor } from '@milkdown/core';
 import { _remountAsEditable, _remountAsReadOnly } from './viewer';
+import { parseSpecUrl } from './router';
 
 // Per-host edit-mode editor registry. Doubles as the idempotency
 // guard: a second call to `enterEditMode` for a host already in edit
@@ -142,7 +143,21 @@ export async function attemptEditAction(host: HTMLElement): Promise<void> {
         return;
       }
       if (response.ok) {
-        await enterEditMode(host);
+        // Issue #91 / AC 5.5 — Check write access before unlocking edit
+        // mode. The user has a live session but may be read-only on
+        // this repo (e.g., a non-collaborator, or a collaborator with
+        // read-only perms). The frontend hits GET /api/github/repos/
+        // {owner}/{repo} (worker proxy carries the access token) and
+        // inspects `permissions.push`. Fail-safe: only an explicit
+        // `push: true` unlocks; anything else (push:false, missing
+        // field, non-2xx, network error) keeps the editor read-only
+        // and surfaces the view-only-lock banner.
+        const canEdit = await checkWriteAccess();
+        if (canEdit) {
+          await enterEditMode(host);
+        } else {
+          renderViewOnlyLock(host);
+        }
         return;
       }
       // 401 / 5xx / any non-2xx → treat as unauthed → pause-and-redirect.
@@ -173,4 +188,53 @@ export async function attemptEditAction(host: HTMLElement): Promise<void> {
   })();
 
   return pendingAttempt;
+}
+
+// Issue #91 / AC 5.5 — Resolve write access for the current spec URL.
+// Returns `true` only on an explicit `permissions.push === true` from
+// the worker proxy; everything else (missing field, non-2xx, network
+// error, malformed JSON) returns `false`. Fail-safe: never unlock
+// without confirmation.
+async function checkWriteAccess(): Promise<boolean> {
+  // Use `document.URL` rather than `window.location.href` so the live
+  // document URL is read (history.replaceState updates document.URL
+  // even when test fixtures stub out window.location). They agree in
+  // production; only diverge in test sandboxes that override location.
+  const parsed = parseSpecUrl(document.URL);
+  if ('error' in parsed) return false;
+  let response: Response | undefined;
+  try {
+    response = await fetch(`/api/github/repos/${parsed.repo}`, {
+      credentials: 'same-origin',
+    });
+  } catch {
+    return false;
+  }
+  if (!response || !response.ok) return false;
+  try {
+    const body = (await response.json()) as {
+      permissions?: { push?: unknown };
+    };
+    return body.permissions?.push === true;
+  } catch {
+    return false;
+  }
+}
+
+// Issue #91 / AC 5.5 — View-only banner. Surfaces when the user has a
+// live session but no push access on the repo. Doesn't replace the
+// editor; the user keeps reading the rendered markdown. Idempotent —
+// a second call with an existing banner re-uses it (no stacking).
+const VIEW_ONLY_LOCK_TESTID = 'view-only-lock';
+
+function renderViewOnlyLock(host: HTMLElement): void {
+  if (typeof document === 'undefined') return;
+  if (document.querySelector(`[data-testid="${VIEW_ONLY_LOCK_TESTID}"]`)) return;
+  const banner = document.createElement('div');
+  banner.setAttribute('data-testid', VIEW_ONLY_LOCK_TESTID);
+  banner.setAttribute('role', 'status');
+  banner.className = 'hashly-view-only-lock';
+  banner.textContent =
+    "View-only — you don't have write access to this repo. Ask the dev to add you.";
+  host.appendChild(banner);
 }

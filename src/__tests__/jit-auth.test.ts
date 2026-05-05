@@ -242,13 +242,24 @@ describe('Issue #91 / AC 5.2 — attemptEditAction (JIT auth + flip)', () => {
   });
 
   it('on 200, enters edit mode (contenteditable flips to true, toolbar appears)', async () => {
-    // The GREEN path: authed user → flip without redirect.
-    fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
+    // The GREEN path: authed user → flip without redirect. AC 5.5
+    // adds a second fetch for the write-access check; we mock both
+    // (session 200 + perms 200 with push:true) to keep this test
+    // pinned on the AC 5.2 contract.
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+      );
+    });
     const { attemptEditAction } = (await import('../edit-mode')) as unknown as {
       attemptEditAction: (host: HTMLElement) => Promise<void>;
     };
@@ -271,10 +282,19 @@ describe('Issue #91 / AC 5.2 — attemptEditAction (JIT auth + flip)', () => {
 
   it('on 200, does NOT redirect', async () => {
     // The defensive other-half of the GREEN pin: an authed user
-    // must NOT be bounced through the auth flow again.
-    fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true }), { status: 200 }),
-    );
+    // must NOT be bounced through the auth flow again. AC 5.5 adds
+    // the perms fetch; mock both.
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+      );
+    });
     const { attemptEditAction } = (await import('../edit-mode')) as unknown as {
       attemptEditAction: (host: HTMLElement) => Promise<void>;
     };
@@ -359,16 +379,29 @@ describe('Issue #91 / AC 5.2 — attemptEditAction (JIT auth + flip)', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('is idempotent against a sync race — two synchronous calls perform exactly one fetch + at most one flip', async () => {
+  it('is idempotent against a sync race — two synchronous calls perform at most one session-status fetch + one perms fetch + one flip', async () => {
     // Per builder's AC 5.1 heads-up #3: WeakMap-based idempotency
     // breaks against synchronous re-entrancy because the first
     // call's await releases control before the WeakMap.set lands.
     // Pin the contract HERE in 5.2 because intent detection (5.2's
     // wiring) might fire multiple sync events (keydown +
     // beforeinput + click) — the JIT auth check must not fire twice.
-    fetchSpy.mockResolvedValue(
-      new Response(JSON.stringify({ ok: true }), { status: 200 }),
-    );
+    //
+    // AC 5.5 added a perms fetch on the 200 path; the sync-race
+    // dedup must apply to BOTH fetches (one of each, not two of
+    // each). Same module-local pending lock from AC 5.2 covers
+    // both.
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+      );
+    });
     const { attemptEditAction } = (await import('../edit-mode')) as unknown as {
       attemptEditAction: (host: HTMLElement) => Promise<void>;
     };
@@ -379,9 +412,19 @@ describe('Issue #91 / AC 5.2 — attemptEditAction (JIT auth + flip)', () => {
     const p2 = attemptEditAction(host);
     await Promise.all([p1, p2]);
 
+    const sessionFetches = fetchSpy.mock.calls.filter(
+      ([u]) => String(u) === '/api/session-status',
+    );
+    const permsFetches = fetchSpy.mock.calls.filter(
+      ([u]) => String(u).startsWith('/api/github/repos/'),
+    );
     expect(
-      fetchSpy.mock.calls.length,
-      `expected exactly ONE fetch call against /api/session-status from two synchronous invocations (AC 5.2 sync-race guard; without dedup, the second handler fires its own session-status request and could redirect mid-flip). Got ${fetchSpy.mock.calls.length} calls.`,
+      sessionFetches.length,
+      `expected exactly ONE /api/session-status fetch from two synchronous invocations (AC 5.2 sync-race guard; the dedup must cover the session check). Got ${sessionFetches.length}.`,
+    ).toBe(1);
+    expect(
+      permsFetches.length,
+      `expected exactly ONE perms fetch from two synchronous invocations (AC 5.5 added the perms check; the same pending lock dedups it). Got ${permsFetches.length}.`,
     ).toBe(1);
     expect(
       host.querySelectorAll('.ProseMirror').length,
@@ -417,9 +460,19 @@ describe('Issue #91 / AC 5.2 cross-pin — frontmatter survives the JIT 200 path
   });
 
   it('after the 200 → enterEditMode flow, getViewerMarkdown(host) re-emits byte-equal frontmatter', async () => {
-    fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true }), { status: 200 }),
-    );
+    // AC 5.5 cross-pin: the perms fetch lands on the 200 happy
+    // path; mock it returning push:true so the flip happens.
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+      );
+    });
 
     const { mountViewer, getViewerMarkdown } = (await import('../viewer')) as unknown as {
       mountViewer: (host: HTMLElement, content: string) => Promise<Editor>;
