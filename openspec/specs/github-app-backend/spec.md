@@ -71,3 +71,22 @@ The system SHALL include a configurable fallback auth path using a registered OA
 
 - **WHEN** the auth flow is using the OAuth App fallback
 - **THEN** the system requests the minimum scope sufficient for single-file edit + PR creation (`public_repo` for public-only, or `repo` if private-repo support is needed); broader scopes are NOT requested
+
+### Requirement: Backend served same-origin with the frontend
+
+The backend SHALL be reachable on the same origin (scheme + host + port) as the static frontend. The frontend issues `fetch(..., { credentials: 'same-origin' })` against `/auth/*` and `/api/*` paths and relies on the browser to attach the session cookie unconditionally; cross-origin deployment would require either CORS preflight + `credentials: 'include'` (not used) or a custom-domain workaround.
+
+#### Scenario: `/auth/start` is reachable as a same-origin path
+
+- **WHEN** the browser issues a same-origin `GET /auth/start` against the deployed origin
+- **THEN** the backend responds with a redirect to GitHub (302) and sets the state cookie on the same-origin response — no separate API host, no CORS preflight required
+
+#### Scenario: `/api/session-status` honors the cookie without CORS
+
+- **WHEN** the browser issues a same-origin `GET /api/session-status` with the session cookie attached
+- **THEN** the backend returns a JSON response WITHOUT any `Access-Control-*` headers — the request is same-origin, so the browser sends the cookie unconditionally and no CORS dance is needed
+
+#### Scenario: OAuth callback redirects to a same-origin URL
+
+- **WHEN** the user completes the OAuth round-trip with a same-origin `return` URL embedded in the state cookie
+- **THEN** the backend's callback response sets a `Location` header pointing at a URL with the same scheme + host as the original request — never a cross-origin URL — falling back to `/` if the encoded `return` is missing or fails the same-origin check
