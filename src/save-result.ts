@@ -22,12 +22,34 @@ const SAVE_CONFLICT_TESTID = 'save-conflict';
 const CONFLICT_PHRASE =
   'your edit and an upstream change overlap; please reload';
 
-function clearSaveBanners(host: HTMLElement): void {
+// fix-loop iter-1 / fix #14 — exported so the click handler can clear
+// stale banners synchronously at the top of `onSaveClick`, before the
+// network round-trip starts. Without that synchronous clear, a user
+// retrying after a failure sees the stale banner persist for the
+// duration of the fetch — visually suggesting "nothing happened".
+export function clearSaveBanners(host: HTMLElement): void {
   host
     .querySelectorAll(
       `[data-testid="${SAVE_ERROR_TESTID}"], [data-testid="${SAVE_SUCCESS_TESTID}"], [data-testid="${SAVE_CONFLICT_TESTID}"]`,
     )
     .forEach((el) => el.remove());
+}
+
+// fix-loop iter-1 / fix #13 — only render the PR link when the URL
+// is a real `https://github.com` URL. The prUrl seam canonically
+// flows from the GitHub PR API; anything else (empty string,
+// `javascript:` URI, non-github host) indicates a worker-response
+// regression or response-tampering. With `target="_blank"` an empty
+// href can land on `about:blank` and a `javascript:` href executes
+// attacker code with the user's session. Defense-in-depth.
+function isSafePrUrl(url: string): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && parsed.hostname === 'github.com';
+  } catch {
+    return false;
+  }
 }
 
 export function renderSaveError(host: HTMLElement, message: string): void {
@@ -54,14 +76,24 @@ export function renderSaveSuccess(host: HTMLElement, prUrl: string): void {
   // the user's edit context; rel="noopener noreferrer" mirrors the
   // viewer-header__github-link pattern (AC 4.5) — without noopener,
   // target="_blank" is a tabnabbing vector.
-  const link = document.createElement('a');
-  link.setAttribute('href', prUrl);
-  link.setAttribute('target', '_blank');
-  link.setAttribute('rel', 'noopener noreferrer');
-  link.textContent = 'View on GitHub';
+  //
+  // fix-loop iter-1 / fix #13 — gate link rendering on isSafePrUrl.
+  // If the URL isn't a real `https://github.com/...`, the banner
+  // still renders ("Saved.") but without the link element. The user
+  // gets confirmation; they don't get a malicious or empty href to
+  // click into.
+  if (isSafePrUrl(prUrl)) {
+    const link = document.createElement('a');
+    link.setAttribute('href', prUrl);
+    link.setAttribute('target', '_blank');
+    link.setAttribute('rel', 'noopener noreferrer');
+    link.textContent = 'View on GitHub';
 
-  banner.appendChild(document.createTextNode('Saved — '));
-  banner.appendChild(link);
+    banner.appendChild(document.createTextNode('Saved — '));
+    banner.appendChild(link);
+  } else {
+    banner.appendChild(document.createTextNode('Saved.'));
+  }
 
   host.prepend(banner);
 }

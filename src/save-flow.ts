@@ -9,6 +9,7 @@ export type SaveResult =
   | { ok: false; kind: 'no-write'; message: string }
   | { ok: false; kind: 'conflict'; message: string }
   | { ok: false; kind: 'network'; message: string }
+  | { ok: false; kind: 'unauth'; message: string }
   | { ok: false; kind: 'other'; message: string };
 
 export interface SubmitSaveOpts {
@@ -50,6 +51,19 @@ export async function submitSave(opts: SubmitSaveOpts): Promise<SaveResult> {
     };
   }
 
+  // fix-loop iter-1 / fix #2 — 401 sentinel BEFORE JSON parse. The
+  // worker's auth-gate returns plain `"unauthorized"` text/plain; a
+  // body-parse-then-branch path would lose the structural signal in
+  // the parse-error fallback. Special-case status 401 so the caller
+  // can render a session-expired prompt with a recovery hint.
+  if (response.status === 401) {
+    return {
+      ok: false,
+      kind: 'unauth',
+      message: 'Your session expired.',
+    };
+  }
+
   let body: {
     ok?: unknown;
     kind?: unknown;
@@ -73,7 +87,12 @@ export async function submitSave(opts: SubmitSaveOpts): Promise<SaveResult> {
   const kind = body?.kind;
   const message = typeof body?.message === 'string' ? body.message : '';
 
-  if (kind === 'no-write' || kind === 'conflict' || kind === 'network') {
+  if (
+    kind === 'no-write' ||
+    kind === 'conflict' ||
+    kind === 'network' ||
+    kind === 'unauth'
+  ) {
     return { ok: false, kind, message };
   }
 

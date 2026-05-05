@@ -30,7 +30,12 @@ import type { Editor } from '@milkdown/core';
 import { _remountAsEditable, _remountAsReadOnly, getViewerMarkdown } from './viewer';
 import { parseSpecUrl } from './router';
 import { submitSave } from './save-flow';
-import { renderSaveConflict, renderSaveSuccess } from './save-result';
+import {
+  clearSaveBanners,
+  renderSaveConflict,
+  renderSaveError,
+  renderSaveSuccess,
+} from './save-result';
 
 // Per-host edit-mode editor registry. Doubles as the idempotency
 // guard: a second call to `enterEditMode` for a host already in edit
@@ -145,6 +150,13 @@ function onSaveClick(host: HTMLElement): void {
   const content = getViewerMarkdown(host);
   if (content === null) return; // no viewer mounted
 
+  // fix-loop iter-1 / fix #14 — clear stale save-* banners
+  // synchronously, BEFORE the fetch. Without this, a user retrying
+  // after a failure sees the stale error banner persist for the
+  // entire network round-trip; the next renderSave* clears it only
+  // when the fetch resolves.
+  clearSaveBanners(host);
+
   // fix-loop iter-1 / fix #7 — in-flight visual state. Query the
   // button at click time (not closure-captured) so a re-mounted
   // toolbar doesn't leave us holding a stale node. Restoration
@@ -175,14 +187,32 @@ function onSaveClick(host: HTMLElement): void {
       // round-tripped from the worker response.
       // Issue #92 / AC 6.5 — render the conflict banner with a fresh-
       // read getContent so the Copy button captures any post-render
-      // edits the user made before clicking. Other branches
-      // (no-write / network / other) wire in their own slices.
+      // edits the user made before clicking.
+      // fix-loop iter-1 / fix #2 — wire the remaining error kinds
+      // (no-write / network / unauth / other) to renderSaveError.
+      // Without this, AC 6.7's literal phrase never reaches the user
+      // (worker translates the GitHub 403 correctly, but the click
+      // handler discards the message).
       if (result.ok) {
         renderSaveSuccess(host, result.prUrl);
       } else if (result.kind === 'conflict') {
         renderSaveConflict(host, {
           getContent: () => getViewerMarkdown(host) ?? '',
         });
+      } else if (result.kind === 'network') {
+        renderSaveError(
+          host,
+          "Couldn't reach the server — please check your connection and try again.",
+        );
+      } else if (result.kind === 'unauth') {
+        renderSaveError(
+          host,
+          'Your session expired — please sign back in and retry.',
+        );
+      } else {
+        // 'no-write' or 'other' — the worker's message is the
+        // user-facing copy. AC 6.7's verbatim phrase round-trips here.
+        renderSaveError(host, result.message);
       }
     } finally {
       if (saveBtn) {
