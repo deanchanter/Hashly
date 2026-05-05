@@ -92,7 +92,10 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
   // 403s, we surface the no-write translation. (Other ACs will handle
   // the success path; we keep this slice minimal — any 403 on a write
   // path becomes the AC 6.7 structured response.)
-  const branchName = `hashly-save-${Date.now()}`;
+  // Issue #92 / AC 6.2 — branch namespace `hashly/spec-edit-<timestamp>`.
+  // The `/` is intentional Git namespace convention (cf. `feature/x`,
+  // `release/y`); GitHub's POST /git/refs accepts it.
+  const branchName = `hashly/spec-edit-${Date.now()}`;
 
   // First: GET source ref's commit SHA to base the new branch on.
   const refResp = await fetch(
