@@ -617,3 +617,29 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Issue #92 fix-loop iter-2 / fix #3 — Reload button styling.
+ * Mirrors `.hashly-save-conflict__copy` so the two recovery
+ * affordances on the conflict banner have parity (visual weight,
+ * focus indication, hover state). */
+
+.hashly-save-conflict__reload {
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.hashly-save-conflict__reload:hover {
+  background: var(--paper-2);
+}
+
+.hashly-save-conflict__reload:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

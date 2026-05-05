@@ -314,3 +314,79 @@ describe('Issue #92 fix #6 — Copy button has the `.hashly-save-conflict__copy`
     ).toBe(true);
   });
 });
+
+describe('Issue #92 iter-2 fix #3 — Reload button CSS', () => {
+  // Iter-1 added the `.hashly-save-conflict__reload` class on the
+  // button DOM (slice 7) but never added a CSS rule for it. Copy
+  // and Reload sit adjacent in the conflict banner; Copy is fully
+  // styled while Reload uses browser default. At the highest-
+  // stakes UX moment (the user is recovering from a stale-SHA
+  // conflict), the recovery affordances looked half-finished.
+  //
+  // Fix per team-lead: copy `.hashly-save-conflict__copy` rules
+  // verbatim into `.hashly-save-conflict__reload`. Add some
+  // `margin-left` to separate the buttons visually. Add the
+  // matching `:focus-visible` rule for keyboard focus indication.
+
+  it('`.hashly-save-conflict__reload` rule exists with `padding`', () => {
+    const css = loadStyleCss();
+    const matching = rulesMatching(css, (r) =>
+      hasSelector(r, '.hashly-save-conflict__reload'),
+    );
+    expect(
+      matching.length,
+      'expected at least one `.hashly-save-conflict__reload` rule in src/style.css (iter-2 fix #3 — Reload button styling, mirrors `.hashly-save-conflict__copy` from iter-1).',
+    ).toBeGreaterThan(0);
+
+    const hasPadding = matching.some((r) => findDecl(r.body, 'padding') !== null);
+    expect(
+      hasPadding,
+      'expected `.hashly-save-conflict__reload` to declare `padding` (UA-default is unstyled; padding is the load-bearing button affordance).',
+    ).toBe(true);
+  });
+
+  it('`.hashly-save-conflict__reload` has a `border` declaration', () => {
+    // Belt with the Copy-button parallel: a styled button has a
+    // visible border, not just text. Pin both padding and border
+    // so a regression that drops one but keeps the other doesn't
+    // slip through.
+    const css = loadStyleCss();
+    const matching = rulesMatching(css, (r) =>
+      hasSelector(r, '.hashly-save-conflict__reload'),
+    );
+    const hasBorder = matching.some((r) => findDecl(r.body, 'border') !== null);
+    expect(
+      hasBorder,
+      'expected `.hashly-save-conflict__reload` to declare `border` (visual button affordance; mirrors Copy button styling).',
+    ).toBe(true);
+  });
+
+  it('`.hashly-save-conflict__reload` references at least one `var(--*)` brand token', () => {
+    const css = loadStyleCss();
+    const matching = rulesMatching(css, (r) =>
+      hasSelector(r, '.hashly-save-conflict__reload'),
+    );
+    const hasVar = matching.some((r) => VAR_RE.test(r.body));
+    expect(
+      hasVar,
+      'expected `.hashly-save-conflict__reload` rule body to reference at least one `var(--*)` brand token (so dark-mode rebind works automatically + no raw hex).',
+    ).toBe(true);
+  });
+
+  it('`.hashly-save-conflict__reload:focus-visible` rule exists (a11y — keyboard focus indication)', () => {
+    // Same a11y mandate as `.hashly-save-conflict__copy:focus-
+    // visible` from iter-1 fix #6. Keyboard users navigating
+    // the conflict banner with Tab need a visible focus ring on
+    // BOTH buttons (Copy AND Reload); without this rule, only
+    // Copy gets the ring and Reload uses UA-default focus
+    // styling (or none, depending on browser).
+    const css = loadStyleCss();
+    const matching = rulesMatching(css, (r) =>
+      hasSelectorWithSuffix(r, '.hashly-save-conflict__reload', ':focus-visible'),
+    );
+    expect(
+      matching.length,
+      'expected a `.hashly-save-conflict__reload:focus-visible` rule (iter-2 fix #3 — keyboard focus indication parity with Copy button; pinned by team-lead in original iter-1 brief: "`:focus-visible` for the Copy/Reload buttons").',
+    ).toBeGreaterThan(0);
+  });
+});
