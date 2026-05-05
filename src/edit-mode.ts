@@ -53,10 +53,18 @@ function ensureEditToolbar(): void {
   // MVP affordance: a single Save button. AC 5.1 only pins the form
   // factor (toolbar with at least one <button>); the actual save flow
   // lands in #92, so this stays a placeholder for now.
+  //
+  // Issue #91 fix-loop-1 / fix #6 — disabled until #92 lands so a
+  // click doesn't look broken. aria-disabled mirrors the .disabled
+  // property so screen readers announce the state; title gives
+  // hovering users the rationale.
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.textContent = 'Save';
   saveBtn.setAttribute('data-testid', 'edit-toolbar-save');
+  saveBtn.disabled = true;
+  saveBtn.setAttribute('aria-disabled', 'true');
+  saveBtn.title = 'Save flow ships in #92 — disabled for now.';
   toolbar.appendChild(saveBtn);
 
   document.body.appendChild(toolbar);
@@ -124,7 +132,22 @@ export async function exitEditMode(host: HTMLElement): Promise<void> {
 // re-fetch (the session may have been revoked between attempts).
 let pendingAttempt: Promise<void> | null = null;
 
-export async function attemptEditAction(host: HTMLElement): Promise<void> {
+export interface AttemptEditOptions {
+  // Issue #91 fix-loop-1 / fix #5 — Distinguish the first-time JIT
+  // attempt (user-typed → redirect → stash flag) from the post-auth
+  // restore path (bootstrap consumed the flag → re-enter edit mode).
+  // On the RESTORE path a 401 means the user clicked back from the
+  // GitHub auth screen WITHOUT signing in: re-stashing the flag
+  // and redirecting again would put them in an infinite loop. The
+  // restore path instead surfaces an "auth cancelled" banner and
+  // stays put.
+  isRestore?: boolean;
+}
+
+export async function attemptEditAction(
+  host: HTMLElement,
+  options: AttemptEditOptions = {},
+): Promise<void> {
   if (pendingAttempt) return pendingAttempt;
 
   pendingAttempt = (async () => {
@@ -160,11 +183,17 @@ export async function attemptEditAction(host: HTMLElement): Promise<void> {
         }
         return;
       }
-      // 401 / 5xx / any non-2xx → treat as unauthed → pause-and-redirect.
-      // Pause = do NOT call enterEditMode so the read-only DOM stays
-      // read-only. The full current href (including `?repo=...&path=
-      // ...&ref=...`) round-trips through encodeURIComponent so the
-      // post-auth callback can land back on the same spec.
+      // 401 / 5xx / any non-2xx → treat as unauthed.
+      //
+      // Issue #91 fix-loop-1 / fix #5 — Branch on the restore flag.
+      // First-time path: stash + redirect (AC 5.2 / 5.3 contract).
+      // Restore path: render an "auth cancelled" banner instead — the
+      // user just clicked back from GitHub without auth'ing; bouncing
+      // them back to /auth/start would loop forever.
+      if (options.isRestore) {
+        renderAuthCancelledBanner(host);
+        return;
+      }
       //
       // Issue #91 / AC 5.3 — Stash a one-shot pending-edit flag in
       // sessionStorage BEFORE the redirect lands so bootstrapWeb can
@@ -188,6 +217,25 @@ export async function attemptEditAction(host: HTMLElement): Promise<void> {
   })();
 
   return pendingAttempt;
+}
+
+// Issue #91 fix-loop-1 / fix #5 — auth-cancelled banner. Shown when
+// the post-auth restore path detects the user landed back without a
+// live session (clicked back, denied install on GitHub, etc.). Lets
+// the user retry deliberately rather than getting bounced through an
+// infinite redirect loop.
+const AUTH_CANCELLED_TESTID = 'auth-cancelled';
+
+function renderAuthCancelledBanner(host: HTMLElement): void {
+  if (typeof document === 'undefined') return;
+  if (document.querySelector(`[data-testid="${AUTH_CANCELLED_TESTID}"]`)) return;
+  const banner = document.createElement('div');
+  banner.setAttribute('data-testid', AUTH_CANCELLED_TESTID);
+  banner.setAttribute('role', 'status');
+  banner.className = 'hashly-auth-cancelled';
+  banner.textContent =
+    "Sign-in cancelled — you didn't sign in. Try editing again to retry.";
+  host.prepend(banner);
 }
 
 // Issue #91 / AC 5.5 — Resolve write access for the current spec URL.
@@ -236,5 +284,7 @@ function renderViewOnlyLock(host: HTMLElement): void {
   banner.className = 'hashly-view-only-lock';
   banner.textContent =
     "View-only — you don't have write access to this repo. Ask the dev to add you.";
-  host.appendChild(banner);
+  // Issue #91 fix-loop-1 / fix #4 — banner ABOVE the editor body so
+  // the user sees it without scrolling past the rendered markdown.
+  host.prepend(banner);
 }

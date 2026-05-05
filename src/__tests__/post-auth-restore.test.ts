@@ -293,7 +293,27 @@ describe('Issue #91 / AC 5.3 — post-auth detection: bootstrapWeb auto-enters e
     // page load (without the flag gate) would silently turn every
     // viewer load into a (potentially-unauthed) edit attempt. The
     // flag is the explicit signal "we just authed".
-    fetchSpy.mockResolvedValueOnce(new Response('# Spec', { status: 200 }));
+    //
+    // AC 5.4 / fix-loop-1 #1 added a `mountSessionIndicator`
+    // session-status fetch that fires unconditionally on every web
+    // bootstrap (so signed-in users see the avatar). That call is
+    // expected here too — the original "exactly 1 fetch" pin was a
+    // count-based proxy for "no auto-restore fired", which is now
+    // better expressed via the load-bearing perms-fetch filter:
+    // attemptEditAction's auto-restore would fire the perms check;
+    // without the flag, no perms fetch should happen.
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(new Response(null, { status: 401 }));
+      }
+      if (u.startsWith('/api/github/repos/')) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ permissions: { push: true } }), { status: 200 }),
+        );
+      }
+      return Promise.resolve(new Response('# Spec', { status: 200 }));
+    });
 
     const { bootstrap } = await import('../main');
     bootstrap();
@@ -313,11 +333,18 @@ describe('Issue #91 / AC 5.3 — post-auth detection: bootstrapWeb auto-enters e
       'expected NO edit-toolbar without the flag.',
     ).toBeNull();
 
-    // AND only one fetch (the spec; no session-status check).
+    // The load-bearing pin: attemptEditAction's auto-restore path
+    // would fire a `/api/github/repos/...` perms check. Without
+    // the flag, that path doesn't run, so NO perms fetch should
+    // appear. (mountSessionIndicator's session-status fetch is
+    // expected — the indicator runs on every bootstrap.)
+    const permsFetches = fetchSpy.mock.calls.filter(
+      ([u]) => String(u).startsWith('/api/github/repos/'),
+    );
     expect(
-      fetchSpy.mock.calls.length,
-      'expected NO session-status fetch when the flag is absent (AC 5.3 — gating means "no flag → don\'t even check session"; otherwise we make a redundant fetch on every page load).',
-    ).toBe(1);
+      permsFetches.length,
+      `expected NO perms fetch when the flag is absent (AC 5.3 — gating means "no flag → no auto-restore"; the perms fetch is the unmistakable signal that attemptEditAction proceeded). Got ${permsFetches.length}.`,
+    ).toBe(0);
   });
 
   it('if mountViewer fails (renderViewerError path), the flag is NOT consumed (user can retry)', async () => {
