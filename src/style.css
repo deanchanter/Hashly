@@ -422,9 +422,15 @@ body {
  * rebinds automatically.
  */
 
+/* Issue #91 fix-loop-2 / fix #3 — Anchor the toolbar BELOW the
+ * viewer-header (≈40px tall: 1.8rem padding + ~1.4*0.9rem text).
+ * The round-1 `top: 0.75rem` (12px) overlapped `.viewer-header__coords`
+ * and hid the spec coordinates the moment the user entered edit mode.
+ * 4rem (64px) clears the header with a comfortable gap on both
+ * desktop and reduced-density layouts. */
 .edit-toolbar {
   position: fixed;
-  top: 0.75rem;
+  top: 4rem;
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
