@@ -87,7 +87,13 @@ export function renderSaveSuccess(host: HTMLElement, prUrl: string): void {
     link.setAttribute('href', prUrl);
     link.setAttribute('target', '_blank');
     link.setAttribute('rel', 'noopener noreferrer');
-    link.textContent = 'View on GitHub';
+    // fix-loop iter-1 / fix #16 — distinguish from the viewer-header
+    // link (which reads "View on GitHub" verbatim and points at the
+    // file blob view). Identical link text on adjacent elements
+    // would let the user navigate to the wrong place at a high-
+    // stakes moment. The "GitHub" anchor stays so AC 6.3's
+    // recognizable-anchor pin keeps holding.
+    link.textContent = 'View pull request on GitHub';
 
     banner.appendChild(document.createTextNode('Saved — '));
     banner.appendChild(link);
@@ -132,6 +138,21 @@ export function renderSaveConflict(
     void navigator.clipboard.writeText(content);
   });
   banner.appendChild(copyBtn);
+
+  // fix-loop iter-1 / fix #17 — clickable Reload affordance next to
+  // Copy. The AC 6.5 user-facing message instructs "please reload";
+  // a high-stakes recovery moment shouldn't rely on the user
+  // remembering Cmd+R. Pass `() => location.reload()` (function
+  // expression) — NOT `location.reload()` (function call) — so the
+  // reload only fires on click, not on banner render.
+  const reloadBtn = document.createElement('button');
+  reloadBtn.type = 'button';
+  reloadBtn.textContent = 'Reload now';
+  reloadBtn.className = 'hashly-save-conflict__reload';
+  reloadBtn.addEventListener('click', () => {
+    window.location.reload();
+  });
+  banner.appendChild(reloadBtn);
 
   host.prepend(banner);
 }
