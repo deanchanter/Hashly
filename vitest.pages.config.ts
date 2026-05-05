@@ -41,5 +41,6 @@ export default defineConfig({
   test: {
     include: ["functions/__tests__/**/*.test.ts"],
     globalSetup: ["./pages-test-setup.ts"],
+    setupFiles: ["./functions/__tests__/setup.ts"],
   },
 });
