@@ -42,19 +42,21 @@ The system SHALL, on the user's `Save` action, create a new branch on the target
 - **WHEN** an authenticated user clicks `Save` twice in the same session, each time after making further edits
 - **THEN** the second save updates the existing PR (pushes a new commit to the same branch) rather than opening a duplicate PR
 
-### Requirement: Auto-rebase on stale SHA
+### Requirement: Conflict detection on stale SHA
 
-The system SHALL, when the file's SHA on the source ref has advanced since the page loaded, attempt to rebase the user's edits onto the latest content before opening or updating the PR.
+The system SHALL, when the file's SHA on the source ref has advanced since the page loaded, refuse to overwrite the upstream change and surface a conflict to the user.
 
-#### Scenario: Non-overlapping edits during stale-SHA save
+In v0.3 the system SHALL use a strict SHA-equality check: any SHA mismatch (regardless of whether the user's edits actually overlap the upstream change at the line level) is treated as a conflict. Three-way merge of non-overlapping edits is deferred — see follow-up issue #124.
 
-- **WHEN** the user saves and the source ref has advanced, but the upstream changes do not overlap with the user's edits at the line level
-- **THEN** the system fetches the latest content, applies the user's edits onto it via three-way merge, and proceeds with the PR using the rebased content
+#### Scenario: Stale-SHA save
 
-#### Scenario: Overlapping edits during stale-SHA save
+- **WHEN** the user saves and the source ref has advanced (the file's SHA on the source ref differs from the SHA captured when the user loaded the spec)
+- **THEN** the system displays a "your edit and an upstream change overlap; please reload" message, does NOT open or update a PR, and preserves the user's in-memory edits so they can copy them out before reloading
 
-- **WHEN** the user saves and the upstream changes overlap with the user's edits at the line level (a real conflict)
-- **THEN** the system displays a "your edit and an upstream change overlap; please reload to see the latest version" message, does NOT open or update a PR, and preserves the user's in-memory edits so they can copy them out before reloading
+#### Scenario: Same-SHA save (no upstream change)
+
+- **WHEN** the user saves and the source ref has not advanced (the file's SHA matches the captured baseline)
+- **THEN** the system proceeds with the save, opens the PR, and reports the PR URL to the user
 
 ### Requirement: Hard-fail on no-write-access
 
