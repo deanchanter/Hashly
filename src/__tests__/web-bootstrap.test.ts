@@ -167,20 +167,37 @@ describe('Issue #90 / Critical fix #3 — bootstrap web-mode wiring', () => {
 
   it('Web success: valid params + 200 fetch → header rendered, viewer mounted with content, document.title set to `<path> — Hashly`', async () => {
     // The whole-pipe happy path. parseSpecUrl → fetchSpec → mountViewer.
+    // AC 5.4 / fix-loop-1 #1 added a `mountSessionIndicator` call that
+    // fires `/api/session-status` regardless of session state — so the
+    // bootstrap now does AT LEAST 2 fetches on the success path. We
+    // pin the spec fetch via URL filter (the load-bearing AC 4.3
+    // contract) and stop coupling to total fetch count.
     window.history.replaceState({}, '', '/?repo=foo/bar&path=README.md&ref=main');
-    fetchSpy.mockResolvedValueOnce(new Response('# Hello world\n\nbody', { status: 200 }));
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(new Response(null, { status: 401 }));
+      }
+      if (u === 'https://raw.githubusercontent.com/foo/bar/main/README.md') {
+        return Promise.resolve(new Response('# Hello world\n\nbody', { status: 200 }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
 
     const { bootstrap } = await import('../main');
     bootstrap();
     await settle();
 
-    // Fetch was called exactly once against the right URL.
+    // The AC 4.3 contract: fetchSpec called exactly once against the
+    // right raw.githubusercontent.com URL. Filter rather than count
+    // so AC 5.4's session-status fetch doesn't tip the assertion.
+    const specFetches = fetchSpy.mock.calls.filter(
+      ([u]) => String(u) === 'https://raw.githubusercontent.com/foo/bar/main/README.md',
+    );
     expect(
-      fetchSpy,
-      'expected exactly one fetch call (the AC 4.3 fetchSpec invocation).',
-    ).toHaveBeenCalledTimes(1);
-    const [calledUrl] = fetchSpy.mock.calls[0]!;
-    expect(calledUrl).toBe('https://raw.githubusercontent.com/foo/bar/main/README.md');
+      specFetches.length,
+      `expected exactly ONE fetch against the spec URL (AC 4.3 fetchSpec invocation). Got ${specFetches.length}. All fetches: ${JSON.stringify(fetchSpy.mock.calls.map(([u]) => String(u)))}.`,
+    ).toBe(1);
 
     // Viewer header rendered with the parsed coordinates and a
     // github.com out-link.
@@ -218,14 +235,34 @@ describe('Issue #90 / Critical fix #3 — bootstrap web-mode wiring', () => {
     // After the header renders, a 404 from raw.githubusercontent.com
     // means the spec doesn't exist (or the repo is private). The
     // viewer-error surface replaces the viewer mount.
+    //
+    // AC 5.4 / fix-loop-1 #1 also fires a session-status fetch from
+    // mountSessionIndicator (after the header paints, before
+    // fetchSpec resolves). Switch to URL-aware mocks so neither
+    // fetch starves the other; pin the spec fetch via URL filter.
     window.history.replaceState({}, '', '/?repo=foo/bar&path=missing.md&ref=main');
-    fetchSpy.mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+    fetchSpy.mockImplementation((url: string | URL | Request) => {
+      const u = String(url);
+      if (u === '/api/session-status') {
+        return Promise.resolve(new Response(null, { status: 401 }));
+      }
+      if (u === 'https://raw.githubusercontent.com/foo/bar/main/missing.md') {
+        return Promise.resolve(new Response('Not Found', { status: 404 }));
+      }
+      return Promise.resolve(new Response(null, { status: 404 }));
+    });
 
     const { bootstrap } = await import('../main');
     bootstrap();
     await settle();
 
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const specFetches = fetchSpy.mock.calls.filter(
+      ([u]) => String(u) === 'https://raw.githubusercontent.com/foo/bar/main/missing.md',
+    );
+    expect(
+      specFetches.length,
+      `expected exactly ONE fetch against the spec URL (AC 4.3 fetchSpec invocation). Got ${specFetches.length}.`,
+    ).toBe(1);
 
     const alert = document.querySelector('[role="alert"]');
     expect(

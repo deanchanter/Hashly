@@ -1,5 +1,10 @@
 // Hashly Worker entrypoint — module-worker default export.
-import { handleAuthCallback, handleAuthLogout, handleAuthStart } from "./auth";
+import {
+  handleAuthCallback,
+  handleAuthLogout,
+  handleAuthStart,
+  handleSessionStatus,
+} from "./auth";
 import type { Env } from "./env";
 import { handleGitHubProxy } from "./proxy";
 
@@ -23,7 +28,15 @@ export default {
       return handleAuthLogout(request, env);
     }
 
-    if (url.pathname.startsWith("/api/github/") && request.method === "POST") {
+    if (url.pathname === "/api/session-status" && request.method === "GET") {
+      return handleSessionStatus(request, env);
+    }
+
+    // Issue #91 / AC 5.5 — Relax method guard so the perms-check path
+    // (`GET /api/github/repos/{owner}/{repo}`) reaches the proxy. The
+    // internal proxy already forwards `request.method` correctly; the
+    // auth gate (401 without session) carries through naturally.
+    if (url.pathname.startsWith("/api/github/")) {
       return handleGitHubProxy(request, env);
     }
 
