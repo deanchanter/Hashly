@@ -1,6 +1,10 @@
 # Spec PR editor
 
+## Purpose
+
 An authenticated edit-and-save flow that creates a pull request on the source repo. JIT OAuth (only on first edit). Conflict detection on stale source-ref SHA. Hard-fail with a copy-friendly message when the user lacks write permission on the repo.
+
+## Requirements
 
 ### Requirement: Just-in-time GitHub authentication
 

@@ -1,6 +1,10 @@
 # Spec link viewer
 
+## Purpose
+
 A web UI that opens any GitHub-hosted markdown file via a URL query parameter and renders it WYSIWYG in the browser. Anonymous read for public repos; no sign-in required. Light and dark mode. Tutorial-embeddable as an iframe or plain link.
+
+## Requirements
 
 ### Requirement: Open a GitHub-hosted spec via URL parameters
 

@@ -1,6 +1,10 @@
 # GitHub App backend
 
-A backend service (Cloudflare Worker) that holds GitHub App credentials, handles the OAuth callback, issues HttpOnly session cookies, and proxies authenticated GitHub API calls so the access token never reaches the frontend.
+## Purpose
+
+A backend service (Cloudflare Worker, including Pages Functions) that holds GitHub App credentials, handles the OAuth callback, issues HttpOnly session cookies, and proxies authenticated GitHub API calls so the access token never reaches the frontend.
+
+## Requirements
 
 ### Requirement: Backend handles OAuth callback
 
