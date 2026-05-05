@@ -234,7 +234,7 @@ describe('Issue #91 fix-loop-1 / fix #1 — bootstrapWeb wires mountSessionIndic
 });
 
 // ============================================================================
-// Fix #2 — beforeinput on the read-only editor wires attemptEditAction
+// Fix #2 — keydown on the read-only editor wires attemptEditAction
 // ============================================================================
 //
 // Reviewer finding: `attemptEditAction` has zero callers in
@@ -244,20 +244,23 @@ describe('Issue #91 fix-loop-1 / fix #1 — bootstrapWeb wires mountSessionIndic
 // disabled in web mode and its click calls `toggleEditMode()`, not
 // `attemptEditAction`.
 //
-// Fix shape: install a `beforeinput` listener on the editor host
-// (or its `.ProseMirror` descendant). When the user types in the
-// read-only viewer (which doesn't normally fire input events
-// because contenteditable=false, BUT user agents still fire
-// `beforeinput` for typed keys on focused contenteditable=false
-// elements in some browsers) the listener intercepts, prevents
-// default, and triggers the JIT auth flow.
+// **Iter-2 fix #1 update**: round-1 used `beforeinput` for the
+// trigger, but per spec `beforeinput` only fires on contenteditable
+// =true / input / textarea elements. The viewer's .ProseMirror is
+// contenteditable=false, so real Chrome/Safari/Firefox don't fire
+// `beforeinput` for keystrokes there. Round-1 tests passed because
+// jsdom accepts synthetic `dispatchEvent(new InputEvent(...))` on
+// any element. Iter-2 switches the trigger to `keydown` (which
+// fires regardless of contenteditable) and these tests use a
+// REAL `KeyboardEvent` so they exercise the same path as a real
+// browser.
 //
-// Test pin: after bootstrap, dispatching `beforeinput` on the
-// .ProseMirror triggers a fetch to /api/session-status (the AC 5.2
-// auth check) which is the unmistakable side-effect of
+// Test pin: after bootstrap, dispatching a `keydown` for a
+// printable key on the editor host triggers a fetch to
+// /api/session-status — the unmistakable side-effect of
 // attemptEditAction running.
 
-describe('Issue #91 fix-loop-1 / fix #2 — beforeinput on read-only editor triggers attemptEditAction', () => {
+describe('Issue #91 fix-loop-1 / fix #2 — keydown on read-only editor triggers attemptEditAction', () => {
   let env: ReturnType<typeof setupWebBootstrapEnv>;
 
   beforeEach(() => {
@@ -266,12 +269,15 @@ describe('Issue #91 fix-loop-1 / fix #2 — beforeinput on read-only editor trig
 
   afterEach(() => env.cleanup());
 
-  it('dispatching `beforeinput` on the .ProseMirror after mount triggers a fetch to /api/session-status', async () => {
-    // The pin: the user types in the read-only editor → beforeinput
+  it('dispatching a printable `keydown` on the editor host after mount triggers a fetch to /api/session-status', async () => {
+    // The pin: the user types in the read-only editor → keydown
     // fires → attemptEditAction is invoked → session-status fetch.
     // Without fix #2 there is no listener and the read-only state
     // is a one-way door: users can't enter edit mode without going
     // through the auth flow they don't even know exists.
+    //
+    // Iter-2 fix #1: use a REAL KeyboardEvent (not a synthetic
+    // InputEvent) so the test mirrors what production browsers do.
     mockSessionAndPerms(env.fetchSpy);
 
     const { bootstrap } = await import('../main');
@@ -279,60 +285,58 @@ describe('Issue #91 fix-loop-1 / fix #2 — beforeinput on read-only editor trig
     await new Promise((r) => setTimeout(r, 250));
 
     // Snapshot fetches that happened during bootstrap (spec +
-    // possibly mountSessionIndicator's session-status). Then dispatch
-    // beforeinput and check that NEW fetches happen.
-    const fetchesBeforeInput = env.fetchSpy.mock.calls.length;
+    // mountSessionIndicator's session-status). Then dispatch keydown
+    // and check that NEW fetches happen.
+    const fetchesBefore = env.fetchSpy.mock.calls.length;
 
-    const proseMirror = document.querySelector<HTMLElement>('.ProseMirror');
-    expect(proseMirror, 'precondition: .ProseMirror must be in DOM').not.toBeNull();
+    const editorHost = document.getElementById('editor');
+    expect(editorHost, 'precondition: #editor host must be in DOM').not.toBeNull();
 
-    // Synthesize a beforeinput event. Simulating real typing in a
-    // contenteditable=false element under jsdom is fragile; an
-    // explicit dispatchEvent of a bubbling InputEvent is the
-    // closest portable analog to the user-perceived "I tried to
-    // type" intent.
-    const beforeInputEvent = new InputEvent('beforeinput', {
+    // Real KeyboardEvent: a printable letter, no modifier-only key.
+    // Builder filters for printable keys / Backspace / Delete /
+    // Enter / paste; "a" is a representative printable.
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'a',
       bubbles: true,
       cancelable: true,
-      inputType: 'insertText',
-      data: 'a',
     });
-    proseMirror!.dispatchEvent(beforeInputEvent);
+    editorHost!.dispatchEvent(keydown);
     // Allow attemptEditAction's async chain to start.
     await new Promise((r) => setTimeout(r, 100));
 
     const newFetchUrls = env.fetchSpy.mock.calls
-      .slice(fetchesBeforeInput)
+      .slice(fetchesBefore)
       .map(([u]) => String(u));
     expect(
       newFetchUrls.some((u) => u === '/api/session-status'),
-      `expected a NEW fetch to /api/session-status after dispatching beforeinput on the .ProseMirror (Issue #91 fix #2 — attemptEditAction must be wired to a real user-edit trigger; without this the JIT auth flow is unreachable from the UI). New fetches were: ${JSON.stringify(newFetchUrls)}.`,
+      `expected a NEW fetch to /api/session-status after dispatching keydown on the editor host (Issue #91 fix #2 — attemptEditAction must be wired to a real user-edit trigger; iter-2 switched from beforeinput to keydown because beforeinput doesn't fire on contenteditable=false in real browsers). New fetches were: ${JSON.stringify(newFetchUrls)}.`,
     ).toBe(true);
   });
 
-  it('on an unauthed user, beforeinput intent leads to a redirect (full JIT flow end-to-end)', async () => {
-    // End-to-end: typing in the read-only editor → beforeinput →
+  it('on an unauthed user, keydown intent leads to a redirect (full JIT flow end-to-end)', async () => {
+    // End-to-end: typing in the read-only editor → keydown →
     // attemptEditAction → session-status 401 → redirect to
-    // /auth/start. This proves the entire AC 5.2 chain is wired.
+    // /auth/start. This proves the entire AC 5.2 chain is wired
+    // through the real-browser-compatible trigger.
     mockSessionAndPerms(env.fetchSpy, { sessionStatus: 401 });
 
     const { bootstrap } = await import('../main');
     bootstrap();
     await new Promise((r) => setTimeout(r, 250));
 
-    const proseMirror = document.querySelector<HTMLElement>('.ProseMirror')!;
+    const editorHost = document.getElementById('editor')!;
     const initialRedirectCount = env.redirectCalls().length;
-    proseMirror.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'a' }));
+    editorHost.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
     await new Promise((r) => setTimeout(r, 100));
 
     const newRedirects = env.redirectCalls().slice(initialRedirectCount);
     expect(
       newRedirects.some((u) => u.startsWith('/auth/start?return=')),
-      `expected a redirect to /auth/start after beforeinput on an unauthed user (Issue #91 fix #2 — end-to-end JIT flow). New redirects: ${JSON.stringify(newRedirects)}.`,
+      `expected a redirect to /auth/start after keydown on an unauthed user (Issue #91 fix #2 — end-to-end JIT flow via the iter-2 keydown trigger). New redirects: ${JSON.stringify(newRedirects)}.`,
     ).toBe(true);
   });
 
-  it('beforeinput is preventDefault\'d so the keystroke does not also reach Milkdown\'s handler in read-only mode', async () => {
+  it('keydown for a printable key is preventDefault\'d so the keystroke does not leak into ProseMirror', async () => {
     // Defensive: the listener must `event.preventDefault()` so that
     // the keystroke isn't ALSO processed by ProseMirror (which in
     // some browser/Milkdown combinations could leak the typed
@@ -342,12 +346,12 @@ describe('Issue #91 fix-loop-1 / fix #2 — beforeinput on read-only editor trig
     bootstrap();
     await new Promise((r) => setTimeout(r, 250));
 
-    const proseMirror = document.querySelector<HTMLElement>('.ProseMirror')!;
-    const ev = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: 'a' });
-    const dispatched = proseMirror.dispatchEvent(ev);
+    const editorHost = document.getElementById('editor')!;
+    const ev = new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true });
+    const dispatched = editorHost.dispatchEvent(ev);
     expect(
       dispatched,
-      `expected beforeinput.dispatchEvent to return false (i.e., preventDefault was called) so the read-only contenteditable layer doesn't accept the typed character (Issue #91 fix #2 — defensive belt-and-suspenders against the v0.2 #33 write-handle-bypass class of bug).`,
+      `expected keydown.dispatchEvent to return false (i.e., preventDefault was called) so the read-only contenteditable layer doesn't accept the typed character (Issue #91 fix #2 — defensive belt-and-suspenders against the v0.2 #33 write-handle-bypass class of bug).`,
     ).toBe(false);
   });
 });

@@ -125,12 +125,26 @@ export async function exitEditMode(host: HTMLElement): Promise<void> {
 //      the first call's first await releases control before the
 //      WeakMap.set lands.
 //
+// Issue #91 fix-loop-2 / fix #2 — Terminal-state return so the
+// bootstrap restore branch can branch on "did edit mode actually
+// activate" before rendering the post-auth prompt. Without this
+// distinction the prompt stacks on top of the view-only-lock or
+// auth-cancelled banner, contradicting them.
+//
+// Only the success path returns a truthy sentinel; every other
+// terminal (locked, cancelled, redirected, network error) resolves
+// to `undefined`. That keeps the AC 5.2 / AC 5.5 defensive-floor
+// tests (which pin `resolves.toBeUndefined()`) green while still
+// giving the bootstrap an unambiguous "did we flip into edit mode?"
+// signal via `result === 'success'`.
+export type EditAttemptResult = 'success' | undefined;
+
 // Module-local pending lock — `null` when no attempt is in-flight,
 // otherwise the in-flight Promise. A second call while the first is
 // pending returns the SAME promise, deduping the fetch. Cleared in
 // the finally so consecutive (non-overlapping) attempts always
 // re-fetch (the session may have been revoked between attempts).
-let pendingAttempt: Promise<void> | null = null;
+let pendingAttempt: Promise<EditAttemptResult> | null = null;
 
 export interface AttemptEditOptions {
   // Issue #91 fix-loop-1 / fix #5 — Distinguish the first-time JIT
@@ -147,10 +161,10 @@ export interface AttemptEditOptions {
 export async function attemptEditAction(
   host: HTMLElement,
   options: AttemptEditOptions = {},
-): Promise<void> {
+): Promise<EditAttemptResult> {
   if (pendingAttempt) return pendingAttempt;
 
-  pendingAttempt = (async () => {
+  pendingAttempt = (async (): Promise<EditAttemptResult> => {
     try {
       let response: Response;
       try {
@@ -163,7 +177,7 @@ export async function attemptEditAction(
         // doesn't surface an unhandled rejection. We don't redirect
         // either: a transient network blip shouldn't bounce the user
         // through the auth flow.
-        return;
+        return undefined;
       }
       if (response.ok) {
         // Issue #91 / AC 5.5 — Check write access before unlocking edit
@@ -178,10 +192,10 @@ export async function attemptEditAction(
         const canEdit = await checkWriteAccess();
         if (canEdit) {
           await enterEditMode(host);
-        } else {
-          renderViewOnlyLock(host);
+          return 'success';
         }
-        return;
+        renderViewOnlyLock(host);
+        return undefined;
       }
       // 401 / 5xx / any non-2xx → treat as unauthed.
       //
@@ -192,7 +206,7 @@ export async function attemptEditAction(
       // them back to /auth/start would loop forever.
       if (options.isRestore) {
         renderAuthCancelledBanner(host);
-        return;
+        return undefined;
       }
       //
       // Issue #91 / AC 5.3 — Stash a one-shot pending-edit flag in
@@ -211,6 +225,7 @@ export async function attemptEditAction(
       }
       const returnParam = encodeURIComponent(window.location.href);
       window.location.assign(`/auth/start?return=${returnParam}`);
+      return undefined;
     } finally {
       pendingAttempt = null;
     }
