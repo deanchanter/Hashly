@@ -39,7 +39,7 @@ function isSafeAvatarUrl(value: string): boolean {
 }
 
 export async function mountSessionIndicator(host: HTMLElement): Promise<void> {
-  let response: Response;
+  let response: Response | undefined;
   try {
     response = await fetch('/api/session-status', {
       credentials: 'same-origin',
@@ -48,7 +48,9 @@ export async function mountSessionIndicator(host: HTMLElement): Promise<void> {
     // Network error — no avatar, no button (anonymous fallback).
     return;
   }
-  if (!response.ok) return;
+  // Defensive against undefined responses (test fixtures without a
+  // mock for this endpoint return undefined from `vi.fn()`).
+  if (!response || !response.ok) return;
 
   let body: SessionStatusResponse;
   try {
@@ -69,6 +71,18 @@ export async function mountSessionIndicator(host: HTMLElement): Promise<void> {
     img.src = user.avatar_url;
     img.alt = user.login ?? 'Signed-in user';
     img.className = 'session-indicator__avatar';
+    // Issue #91 fix-loop-1 / fix #8 — onerror fallback to initials
+    // badge. Without this, a 404 / network error / image-deleted
+    // avatar renders as the browser's default broken-image glyph,
+    // making the app look broken.
+    img.addEventListener('error', () => {
+      const initial = (user.login?.[0] ?? '?').toUpperCase();
+      const fallback = document.createElement('span');
+      fallback.setAttribute('data-testid', 'avatar-fallback');
+      fallback.className = 'session-indicator__avatar session-indicator__avatar--fallback';
+      fallback.textContent = initial;
+      img.replaceWith(fallback);
+    });
     wrapper.appendChild(img);
   }
 
@@ -102,6 +116,13 @@ async function handleSignOutClick(wrapper: HTMLElement): Promise<void> {
   if (wrapper.parentElement) {
     wrapper.parentElement.removeChild(wrapper);
   }
+  // Issue #91 fix-loop-1 / fix #7 — clear stale signed-in banners.
+  // The view-only-lock + post-auth-prompt are anchored to the prior
+  // session; surviving past sign-out misleads anonymous users into
+  // thinking they still have access state.
+  document
+    .querySelectorAll('[data-testid="view-only-lock"], [data-testid="post-auth-prompt"]')
+    .forEach((el) => el.parentElement?.removeChild(el));
   // Revert the editor to read-only if it was in edit mode. AC 5.4
   // pins the editor host as `#editor` — the bootstrap convention.
   const editorHost = document.getElementById('editor');
