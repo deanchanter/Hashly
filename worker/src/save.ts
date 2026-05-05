@@ -198,7 +198,13 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
   let currentSha: string;
   try {
     const contentsResp = await fetch(
-      `https://api.github.com/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+      // fix-loop iter-1 / fix #8 — preserve `/` in nested refs.
+      // `encodeURIComponent("feature/x")` → `feature%2Fx` causes
+      // GitHub to 404 (encoded slash is treated literally in the
+      // path-segment). Slice-1's ref validator already restricts
+      // the charset to `[A-Za-z0-9._/-]+` — all URL-safe chars in
+      // the relevant contexts — so no encoding is needed.
+      `https://api.github.com/repos/${repo}/contents/${path}?ref=${ref}`,
       { headers: ghHeaders },
     );
     if (!contentsResp.ok) {
@@ -265,7 +271,16 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
   // the same KV namespace as auth sessions but uses an `edit:`
   // prefix so it can't collide with auth-session IDs (those are
   // opaque base64url, no colons).
-  const editCacheKey = `edit:${sessionId}:${repo}:${path}:${ref}`;
+  //
+  // fix-loop iter-1 / fix #9 — JSON-encode the tuple so the
+  // delimiter isn't `:`. Slice-1's validators forbid `:` in repo /
+  // ref / baseSha but `path` accepts `:` — a future regression that
+  // loosened ref's charset would re-expose the cross-component
+  // collision (`path="a", ref="b:c"` vs `path="a:b", ref="c"`).
+  // JSON.stringify quotes the strings, escaping any internal `"`,
+  // making the key unambiguous regardless of delimiter chars in
+  // the components.
+  const editCacheKey = `edit:${JSON.stringify({ sessionId, repo, path, ref })}`;
   let cached: { branchName: string; prUrl: string } | null = null;
   const storedCache = await env.SESSIONS.get(editCacheKey);
   if (storedCache) {
@@ -290,7 +305,9 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
     // GET source ref's commit SHA to base the new branch on. fix-loop
     // iter-1 / fix #3 — cascade on any non-2xx, NOT just 403.
     const refResp = await fetch(
-      `https://api.github.com/repos/${repo}/git/ref/heads/${encodeURIComponent(ref)}`,
+      // fix-loop iter-1 / fix #8 — preserve `/` in nested refs (see
+      // GET /contents above for rationale).
+      `https://api.github.com/repos/${repo}/git/ref/heads/${ref}`,
       { headers: ghHeaders },
     );
 
