@@ -28,6 +28,11 @@ const COMMIT_MESSAGE_MAX_BYTES = 1024; // 1 KiB
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const REF_CHARSET_RE = /^[A-Za-z0-9._/-]+$/;
 const BASE_SHA_RE = /^[a-f0-9]{40}$/;
+// fix-loop iter-2 / fix #5 — path charset gate (post-decode). Same
+// alphabet as ref. The literal `%` is NOT in the set, so any input
+// that survives a single decode pass with `%` still present (the
+// double-encoded shape, e.g. `%252E` → `%2E`) is rejected here.
+const PATH_CHARSET_RE = /^[A-Za-z0-9._/-]+$/;
 
 function hasTraversalSegment(s: string): boolean {
   for (const segment of s.split("/")) {
@@ -52,10 +57,33 @@ function validateSaveBody(body: {
   if (typeof path !== "string" || path.length === 0) {
     return { ok: false, message: "Missing path." };
   }
-  if (path.startsWith("/")) {
+  // fix-loop iter-2 / fix #4 — decode percent-encoded path BEFORE
+  // checking for traversal segments. iter-1's raw-segment check
+  // missed `specs/%2e%2e/secret.md` (segments are `["specs",
+  // "%2e%2e", "secret.md"]`, none is `..`); GitHub's URL parser
+  // would decode and resolve the traversal. Mirrors `parseSpecUrl`
+  // in `src/router.ts:46-49`.
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(path);
+  } catch {
+    return { ok: false, message: "Path is not valid URI-encoded text." };
+  }
+  if (decodedPath.length === 0) {
+    return { ok: false, message: "Path must not be empty." };
+  }
+  if (decodedPath.startsWith("/")) {
     return { ok: false, message: "Path must be repo-relative (no leading `/`)." };
   }
-  if (hasTraversalSegment(path)) {
+  // fix-loop iter-2 / fix #5 — charset gate on the decoded value.
+  // Rejects `?` (query injection), `#` (URL fragment), space,
+  // newline, backslash, null byte, and literal `%` (the
+  // double-encoding survival flag — single decode of `%252E` leaves
+  // `%2E`, which has `%` and is rejected here).
+  if (!PATH_CHARSET_RE.test(decodedPath)) {
+    return { ok: false, message: "Path contains invalid characters." };
+  }
+  if (hasTraversalSegment(decodedPath)) {
     return { ok: false, message: "Path must not contain `.`, `..`, or empty segments." };
   }
   if (typeof ref !== "string" || ref.length === 0) {
@@ -292,10 +320,53 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
   }
 
   let branchName: string;
+  // fix-loop iter-2 / fix #1 — `putSha` is the file SHA we send in
+  // the PUT body. For the FIRST save it's the source-ref's file SHA
+  // (the branch is at the source's commit, so the file SHA matches).
+  // For the DEDUP path we MUST re-fetch on the cached branch — after
+  // the first commit, the branch's file SHA has advanced beyond the
+  // source-ref's, and real GitHub returns 422 ("sha out of date") on
+  // the second save if we send the stale source-ref sha.
+  let putSha: string = currentSha;
   if (cached?.branchName) {
     // Dedup hit — reuse the existing branch. Skip POST /git/refs
     // (branch already upstream) and POST /pulls (PR already open).
     branchName = cached.branchName;
+
+    // fix-loop iter-2 / fix #1 — re-fetch the file's current SHA
+    // on the cached branch. Without this, the dedup PUT carries the
+    // stale source-ref sha and 422s against real GitHub. Same
+    // failure-cascade rules as the source-ref GET above (#3 / #4).
+    const branchContentsResp = await fetch(
+      `https://api.github.com/repos/${repo}/contents/${path}?ref=${branchName}`,
+      { headers: ghHeaders },
+    );
+    if (!branchContentsResp.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          kind: "other",
+          message: `Could not read file on existing branch (GitHub returned ${branchContentsResp.status}).`,
+        },
+        502,
+      );
+    }
+    let branchJson: { sha?: unknown };
+    try {
+      branchJson = (await branchContentsResp.json()) as typeof branchJson;
+    } catch {
+      return jsonResponse(
+        { ok: false, kind: "other", message: "Could not parse GitHub branch-contents response." },
+        502,
+      );
+    }
+    if (typeof branchJson?.sha !== "string" || branchJson.sha.length === 0) {
+      return jsonResponse(
+        { ok: false, kind: "other", message: "GitHub branch-contents response missing sha." },
+        502,
+      );
+    }
+    putSha = branchJson.sha;
   } else {
     // Issue #92 / AC 6.2 — branch namespace `hashly/spec-edit-<timestamp>`.
     // The `/` is intentional Git namespace convention (cf. `feature/x`,
@@ -392,9 +463,12 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
 
   // PUT contents on the (new or cached) branch. fix-loop iter-1 /
   // fix #1 — GitHub requires `sha:<file's current SHA on the target
-  // ref>` for updates; without it real GitHub returns 422. We
-  // captured currentSha from the GET /contents above. fix #3 —
-  // cascade on any non-2xx beyond the 403 no-write case.
+  // ref>` for updates; without it real GitHub returns 422. fix-loop
+  // iter-2 / fix #1 — `putSha` is the source-ref's sha on the
+  // first-save path and the BRANCH's sha on the dedup path; the
+  // distinction matters because the branch's file SHA advances
+  // after the first commit. fix #3 — cascade on any non-2xx beyond
+  // the 403 no-write case.
   const putResp = await fetch(
     `https://api.github.com/repos/${repo}/contents/${path}`,
     {
@@ -404,7 +478,7 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
         message: commitMessage ?? `Update ${path}`,
         content: btoa(unescape(encodeURIComponent(content))),
         branch: branchName,
-        sha: currentSha,
+        sha: putSha,
       }),
     },
   );
