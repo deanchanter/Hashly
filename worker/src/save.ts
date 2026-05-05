@@ -187,36 +187,66 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
     "content-type": "application/json",
   };
 
-  // Issue #92 / AC 6.4 — Stale-SHA check, FAIL-FAST. Fetch the file's
-  // current blob SHA on the source ref BEFORE any write call. If it
-  // differs from the request's `baseSha`, return a structured
-  // `conflict` response and do NOT proceed. Without this fail-fast,
-  // every conflict would create a dead `hashly/spec-edit-*` branch.
-  //
-  // Scope-down per team-lead authorization: simple "any upstream
-  // change → conflict, user reloads" instead of three-way merge.
-  // False-positive conflicts (non-overlapping concurrent edits) are
-  // rare in the spec-edit persona and AC 6.5's reload prompt makes
-  // recovery cheap. Full diff3 is a v0.4 enhancement.
-  //
-  // Graceful fallback: if the GET errors (network, non-200, malformed
-  // body), we proceed with the write attempt. The user has already
-  // claimed an anchor via baseSha; the worst case is we miss a
-  // conflict, which is no worse than today's pre-AC-6.4 behavior.
-  let currentSha: string | undefined;
+  // Issue #92 / AC 6.4 — Stale-SHA check, FAIL-CLOSED (fix-loop iter-1
+  // / fix #4). Fetch the file's current blob SHA on the source ref
+  // BEFORE any write call. The previous "graceful fallback on fetch
+  // error" was a regression: post-AC-6.4 the user trusts the system
+  // to detect upstream conflicts; a transient blip silently disabling
+  // the check would overwrite changes they never saw. Now: any GET
+  // /contents failure (non-200, network throw, missing sha) returns
+  // a structured `kind:'other'` error and does NOT proceed.
+  let currentSha: string;
   try {
     const contentsResp = await fetch(
       `https://api.github.com/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
       { headers: ghHeaders },
     );
-    if (contentsResp.status === 200) {
-      const contentsJson = (await contentsResp.json()) as { sha?: string };
-      currentSha = contentsJson?.sha;
+    if (!contentsResp.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          kind: "other",
+          message: `Could not verify the spec is up to date (GitHub returned ${contentsResp.status}). Please retry.`,
+        },
+        502,
+      );
     }
+    let contentsJson: { sha?: unknown };
+    try {
+      contentsJson = (await contentsResp.json()) as typeof contentsJson;
+    } catch {
+      return jsonResponse(
+        {
+          ok: false,
+          kind: "other",
+          message: "Could not parse GitHub contents response.",
+        },
+        502,
+      );
+    }
+    if (typeof contentsJson?.sha !== "string") {
+      return jsonResponse(
+        {
+          ok: false,
+          kind: "other",
+          message: "GitHub contents response is missing the sha field.",
+        },
+        502,
+      );
+    }
+    currentSha = contentsJson.sha;
   } catch {
-    currentSha = undefined;
+    return jsonResponse(
+      {
+        ok: false,
+        kind: "other",
+        message: "Could not reach GitHub to verify the spec.",
+      },
+      502,
+    );
   }
-  if (typeof currentSha === "string" && currentSha !== baseSha) {
+
+  if (currentSha !== baseSha) {
     return jsonResponse(
       {
         ok: false,
@@ -257,7 +287,8 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
     // `release/y`); GitHub's POST /git/refs accepts it.
     branchName = `hashly/spec-edit-${Date.now()}`;
 
-    // First: GET source ref's commit SHA to base the new branch on.
+    // GET source ref's commit SHA to base the new branch on. fix-loop
+    // iter-1 / fix #3 — cascade on any non-2xx, NOT just 403.
     const refResp = await fetch(
       `https://api.github.com/repos/${repo}/git/ref/heads/${encodeURIComponent(ref)}`,
       { headers: ghHeaders },
@@ -269,17 +300,38 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
         403,
       );
     }
+    if (!refResp.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          kind: "other",
+          message: `Could not resolve source ref (GitHub returned ${refResp.status}).`,
+        },
+        502,
+      );
+    }
 
-    let refJson: { object?: { sha?: string } };
+    let refJson: { object?: { sha?: unknown } };
     try {
       refJson = (await refResp.json()) as typeof refJson;
     } catch {
-      refJson = {};
+      return jsonResponse(
+        { ok: false, kind: "other", message: "Could not parse GitHub get-ref response." },
+        502,
+      );
     }
     const baseCommitSha = refJson?.object?.sha;
+    if (typeof baseCommitSha !== "string" || baseCommitSha.length === 0) {
+      return jsonResponse(
+        { ok: false, kind: "other", message: "GitHub get-ref response missing object.sha." },
+        502,
+      );
+    }
 
-    // Try to create the branch ref. If GitHub forbids it, that's the
-    // canonical no-write signal.
+    // POST /git/refs — branch create. fix-loop iter-1 / fix #3 +
+    // fix #10. 403 → no-write. 422 → branch already exists (squat /
+    // collision); we surface as `kind:'other'` rather than silently
+    // PUT-ing on the squatted branch. Any other non-2xx → cascade.
     const createBranchResp = await fetch(
       `https://api.github.com/repos/${repo}/git/refs`,
       {
@@ -287,7 +339,7 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
         headers: ghHeaders,
         body: JSON.stringify({
           ref: `refs/heads/${branchName}`,
-          sha: baseCommitSha ?? "",
+          sha: baseCommitSha,
         }),
       },
     );
@@ -298,9 +350,34 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
         403,
       );
     }
+    if (createBranchResp.status === 422) {
+      return jsonResponse(
+        {
+          ok: false,
+          kind: "other",
+          message:
+            "Could not create the save branch (already exists). Please retry.",
+        },
+        422,
+      );
+    }
+    if (!createBranchResp.ok) {
+      return jsonResponse(
+        {
+          ok: false,
+          kind: "other",
+          message: `Could not create the save branch (GitHub returned ${createBranchResp.status}).`,
+        },
+        502,
+      );
+    }
   }
 
-  // PUT contents on the (new or cached) branch.
+  // PUT contents on the (new or cached) branch. fix-loop iter-1 /
+  // fix #1 — GitHub requires `sha:<file's current SHA on the target
+  // ref>` for updates; without it real GitHub returns 422. We
+  // captured currentSha from the GET /contents above. fix #3 —
+  // cascade on any non-2xx beyond the 403 no-write case.
   const putResp = await fetch(
     `https://api.github.com/repos/${repo}/contents/${path}`,
     {
@@ -310,6 +387,7 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
         message: commitMessage ?? `Update ${path}`,
         content: btoa(unescape(encodeURIComponent(content))),
         branch: branchName,
+        sha: currentSha,
       }),
     },
   );
@@ -320,13 +398,28 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
       403,
     );
   }
+  if (!putResp.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        kind: "other",
+        message: `Could not commit the edit (GitHub returned ${putResp.status}).`,
+      },
+      502,
+    );
+  }
 
   if (cached) {
     // Dedup path — reuse the cached PR URL, no POST /pulls.
     return jsonResponse({ ok: true, prUrl: cached.prUrl }, 200);
   }
 
-  // POST a PR for the freshly-created branch.
+  // POST a PR for the freshly-created branch. fix-loop iter-1 /
+  // fix #3 — cascade on any non-2xx, AND validate that html_url is
+  // actually present in the body. The silent-data-loss vector is a
+  // 200 with an empty html_url cascading to {ok:true, prUrl:""} —
+  // the frontend success banner renders an empty link, the user
+  // clicks it, navigation destroys their unsaved edit.
   const prResp = await fetch(`https://api.github.com/repos/${repo}/pulls`, {
     method: "POST",
     headers: ghHeaders,
@@ -344,14 +437,37 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
       403,
     );
   }
+  if (!prResp.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        kind: "other",
+        message: `Could not open the PR (GitHub returned ${prResp.status}).`,
+      },
+      502,
+    );
+  }
 
-  let prJson: { html_url?: string };
+  let prJson: { html_url?: unknown };
   try {
     prJson = (await prResp.json()) as typeof prJson;
   } catch {
-    prJson = {};
+    return jsonResponse(
+      { ok: false, kind: "other", message: "Could not parse GitHub PR response." },
+      502,
+    );
   }
-  const prUrl = prJson?.html_url ?? "";
+  if (typeof prJson?.html_url !== "string" || prJson.html_url.length === 0) {
+    return jsonResponse(
+      {
+        ok: false,
+        kind: "other",
+        message: "GitHub PR response missing html_url.",
+      },
+      502,
+    );
+  }
+  const prUrl = prJson.html_url;
 
   // Persist the dedup record so a subsequent save in this session
   // for the same spec reuses this branch + PR (AC 6.6). TTL matches
