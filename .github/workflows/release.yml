@@ -1,9 +1,18 @@
 name: Release
 
+# v0.3 sunset desktop: this workflow built `.dmg` artifacts for the Tauri
+# desktop app via `cargo tauri build`. v0.2.3 was the final desktop release;
+# v0.3+ ships only as a web app at https://hashly.pages.dev. Workflow gated
+# to only fire for legacy `v0.2.x` tags so existing release infrastructure
+# is preserved should a hotfix ever be needed.
+#
+# A v0.3.x tag will not trigger this workflow. The web app is deployed by
+# Cloudflare Pages from main; no release tag is required.
+
 on:
   push:
     tags:
-      - 'v*'
+      - 'v0.2.*'
 
 permissions:
   contents: write
@@ -49,27 +58,3 @@ jobs:
           files: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           fail_on_unmatched_files: true
           generate_release_notes: true
-
-      # ----------------------------------------------------------------
-      # TODO: Homebrew cask bump — uncomment after creating the
-      # `deanchanter/homebrew-hashly` tap repo and adding a
-      # `HOMEBREW_TAP_GITHUB_TOKEN` repository secret with `repo` scope
-      # on that tap. The cask formula path inside the tap repo is
-      # `Casks/hashly.rb`; the action below opens a PR there with the
-      # new version + SHA256.
-      # ----------------------------------------------------------------
-      # - name: Compute .dmg sha256
-      #   id: sha
-      #   run: |
-      #     DMG=$(ls target/aarch64-apple-darwin/release/bundle/dmg/*.dmg | head -n 1)
-      #     echo "dmg_path=$DMG" >> "$GITHUB_OUTPUT"
-      #     echo "sha256=$(shasum -a 256 "$DMG" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-      #
-      # - name: Bump cask formula in deanchanter/homebrew-hashly
-      #   uses: dawidd6/action-homebrew-bump-formula@<pin-sha>
-      #   with:
-      #     token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-      #     tap: deanchanter/homebrew-hashly
-      #     cask: hashly
-      #     tag: ${{ github.ref_name }}
-      #     download_sha256: ${{ steps.sha.outputs.sha256 }}

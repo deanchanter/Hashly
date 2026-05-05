@@ -67,7 +67,7 @@ Rough phase sketch (not a roadmap):
 
 - **v0.1** — WYSIWYG editor that opens and saves a single `.md` file. Runs on Mac. Light and dark modes from day one.
 - **v0.2** — Spec templates and frontmatter helpers (the SDD-native wedge).
-- **v0.3** — Web build, so tutorials and courses can embed or link directly.
+- **v0.3** — Web build, so tutorials and courses can embed or link directly. Extended in implementation: the web build also supports authenticated edit-and-save via just-in-time GitHub auth, with saves landing as pull requests on the source repo. The desktop app (v0.2.3) is sunset; v0.3 is the active surface. Reconciliation note 2026-05-05: the original "embed or link directly" framing understated the scope — v0.3 ships viewer-AND-editor with PR-back save, addressing the validated PM/dev workflow gap that motivated the pivot.
 - **After v0.3** — push for the first tutorial mention; let distribution feedback shape what comes next.
 
 ## Non-goals for this horizon

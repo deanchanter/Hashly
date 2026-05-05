@@ -1,68 +1,54 @@
 # Hashly
 
-A WYSIWYG markdown reader and editor for macOS, built with [Tauri](https://tauri.app/) v2. v0.2 ships save in place (Cmd+S), unsaved-changes-on-close dialog, Finder double-click wireup, light/dark mode (follows OS), the Hashly brand identity (palette + `#hashly` wordmark + mark), YAML frontmatter recognition, and a *File > New From Template* menu with baked-in PRD / Vision / Task templates. v0.2.2 ships the unsigned `.dmg` + Homebrew cask install paths.
+A free, WYSIWYG markdown reader and editor for [Spec-Driven Development](https://specdriven.dev/) workflows. v0.3 is a web app at **<https://hashly.pages.dev>** — paste a GitHub spec link in the URL and edit it WYSIWYG; saving opens a pull request on the source repo.
 
-## Install
+## Use
 
-### Homebrew (recommended)
+Open a public-repo markdown file at:
 
-```sh
-brew tap deanchanter/hashly
-brew install --cask hashly
+```
+https://hashly.pages.dev/?repo=<owner>/<name>&path=<spec-path>&ref=<branch-or-sha>
 ```
 
-The cask auto-strips the macOS quarantine flag, so first launch works without a Gatekeeper warning.
+For example: <https://hashly.pages.dev/?repo=deanchanter/Hashly&path=README.md>
 
-### Direct .dmg download
+The viewer renders read-only with the v0.2 polish carried over (GFM tables, fenced code, list rhythm, H1 underline, broken-image fallback, frontmatter recognition, light/dark following the OS).
 
-Grab `Hashly_<version>_aarch64.dmg` from the [latest release](https://github.com/deanchanter/Hashly/releases/latest), double-click, drag `Hashly.app` to `/Applications`.
+To edit, click into the document and start typing. You'll be redirected to GitHub for sign-in (just-in-time — no auth needed to read), then dropped back where you were. Click **Save** when done; Hashly opens a pull request against the source ref. You don't need a local checkout.
 
-The `.dmg` is **unsigned** (no Apple Developer ID — see the v0.2 PRD for the rationale). First launch on macOS Sequoia (15.x) refuses with *"Hashly is damaged and can't be opened"* — that dialog is misleading; the app is fine, macOS is rejecting an unsigned download. The Homebrew cask install above avoids this entirely. If you still want the `.dmg` path, strip the quarantine attribute after installing:
+## Embed
 
-```sh
-xattr -cr /Applications/Hashly.app
-open -a Hashly
+The viewer works inside an `<iframe>` — useful for tutorials and courses that want to display a spec inline:
+
+```html
+<iframe src="https://hashly.pages.dev/?repo=owner/name&path=docs/spec.md" width="600" height="400"></iframe>
 ```
 
-The older "right-click → Open" workaround stopped working on Sequoia for unsigned apps; `xattr -cr` is the current escape hatch. macOS records the approval after the first launch, so subsequent launches behave normally.
+## Desktop app (legacy)
 
-## Prerequisites (development)
+v0.2.3 was the final desktop release. The Tauri-based macOS app is no longer under active development; the [v0.2.3 release page](https://github.com/deanchanter/Hashly/releases/tag/v0.2.3-bundle-signing) has the last `.dmg`. The Homebrew cask at `deanchanter/homebrew-hashly` is pinned to v0.2.3 and won't receive updates.
 
-- [Rust](https://rustup.rs/) (stable)
-- [`tauri-cli`](https://v2.tauri.app/reference/cli/) v2: `cargo install tauri-cli --version "^2.0" --locked`
-- macOS Xcode command line tools: `xcode-select --install`
-- [Node.js](https://nodejs.org/) (`^20.19 || >=22.12`) and `npm`
-- [`librsvg`](https://wiki.gnome.org/Projects/LibRsvg) — *only* if you intend to regenerate the icon set after editing `src/brand/icon-primary.svg`: `brew install librsvg`. The committed `src-tauri/icons/` set means routine builds do not need it.
+The `src-tauri/` crate remains in this repo for now (rollback-cheap; a follow-up issue will delete it once v0.3 has shipped green for one week).
 
 ## Develop
 
-From the repo root, install the JS toolkit once:
+Frontend (Vite + TypeScript + Milkdown):
 
 ```sh
 npm install
+npm run dev    # local viewer at http://localhost:1420 with mock data
+npm test       # vitest + jsdom
 ```
 
-Then start the app:
+Worker backend (Cloudflare Workers + WebCrypto):
 
 ```sh
-cargo tauri dev
+cd worker
+npm test       # vitest + @cloudflare/vitest-pool-workers
 ```
 
-This builds the Rust core, runs Vite (`npm run dev`) for the frontend via Tauri's `beforeDevCommand`, and opens a native window titled "Hashly".
+The Worker is deployed via `wrangler deploy` from the `worker/` directory; secrets (GitHub App ID, App private key, OAuth client ID/secret, session HMAC key, KV namespace ID) are configured per the [v0.3 external-actions checklist](https://github.com/deanchanter/Hashly/issues/98).
 
-## Test
+## License & status
 
-```sh
-cargo test
-npm test
-```
-
-Frontend unit tests live in `src/__tests__/` and run via Vitest + jsdom.
-
-## Build the bundle locally
-
-```sh
-cargo tauri build
-```
-
-Produces `Hashly_<version>_aarch64.dmg` under `target/release/bundle/dmg/` (workspace target dir; the workflow uses `--target aarch64-apple-darwin` and lands the same `.dmg` under `target/aarch64-apple-darwin/release/bundle/dmg/`). Pushing a `vX.Y.Z` git tag triggers `.github/workflows/release.yml`, which runs the same build on `macos-14` and uploads the `.dmg` to the matching GitHub release.
+Free forever, no monetization. v0.3 is the active development surface; v0.2.x is in maintenance-only mode. See `specs/hashly-vision.md` for the broader product direction.
