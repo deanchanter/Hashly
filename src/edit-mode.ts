@@ -30,7 +30,7 @@ import type { Editor } from '@milkdown/core';
 import { _remountAsEditable, _remountAsReadOnly, getViewerMarkdown } from './viewer';
 import { parseSpecUrl } from './router';
 import { submitSave } from './save-flow';
-import { renderSaveSuccess } from './save-result';
+import { renderSaveConflict, renderSaveSuccess } from './save-result';
 
 // Per-host edit-mode editor registry. Doubles as the idempotency
 // guard: a second call to `enterEditMode` for a host already in edit
@@ -150,10 +150,17 @@ function onSaveClick(host: HTMLElement): void {
         baseSha,
       });
       // Issue #92 / AC 6.3 — render the success banner with the PR URL
-      // round-tripped from the worker response. Other branches (no-write
-      // / conflict / network / other) get wired in their own slices.
+      // round-tripped from the worker response.
+      // Issue #92 / AC 6.5 — render the conflict banner with a fresh-
+      // read getContent so the Copy button captures any post-render
+      // edits the user made before clicking. Other branches
+      // (no-write / network / other) wire in their own slices.
       if (result.ok) {
         renderSaveSuccess(host, result.prUrl);
+      } else if (result.kind === 'conflict') {
+        renderSaveConflict(host, {
+          getContent: () => getViewerMarkdown(host) ?? '',
+        });
       }
     } finally {
       pendingSave = null;
