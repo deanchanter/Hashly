@@ -45,6 +45,41 @@ function base64Decode(b64: string): Uint8Array {
   return out;
 }
 
+/** URL-safe base64 → Uint8Array. Inverse of `base64UrlEncode`. */
+function base64UrlDecode(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
+  return base64Decode(padded);
+}
+
+/**
+ * Issue #91 / AC 5.3 — Same-origin validation for the `return` query param.
+ *
+ * Returns the validated return URL string (the original input shape, so a
+ * relative path stays relative, an absolute URL stays absolute) or `null`
+ * if the URL is missing, empty, malformed, or cross-origin.
+ *
+ * Open-redirect protection: a request like `?return=https://evil.com/foo`
+ * or `?return=//evil.com/foo` would let an attacker post-auth land the
+ * user on a controlled domain with the auth flow visually intact. We
+ * reject anything whose parsed origin doesn't match the request URL's
+ * origin. Relative paths parse against the request URL and are accepted.
+ */
+function validateReturnUrl(
+  returnUrl: string | null,
+  requestUrl: string,
+): string | null {
+  if (!returnUrl) return null;
+  try {
+    const parsed = new URL(returnUrl, requestUrl);
+    const reqOrigin = new URL(requestUrl).origin;
+    if (parsed.origin !== reqOrigin) return null;
+    return returnUrl;
+  } catch {
+    return null;
+  }
+}
+
 /** Mint a fresh CSRF state / session nonce — 24 random bytes → 32 char base64url. */
 function mintNonce(): string {
   const buf = new Uint8Array(24);
@@ -115,7 +150,7 @@ async function exchangeInstallationToken(
   return (await res.json()) as InstallTokenResponse;
 }
 
-export async function handleAuthStart(_request: Request, env: Env): Promise<Response> {
+export async function handleAuthStart(request: Request, env: Env): Promise<Response> {
   const state = mintNonce();
   let location: string;
   if (env.AUTH_METHOD === "oauth-app") {
@@ -129,8 +164,22 @@ export async function handleAuthStart(_request: Request, env: Env): Promise<Resp
     location = `https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new?state=${state}`;
   }
 
+  // Issue #91 / AC 5.3 — Thread the `return` URL through the OAuth round
+  // trip. Validated same-origin here; stashed in the state cookie next to
+  // the CSRF nonce. Format: `${nonce}.${base64url(returnUrl)}` when a
+  // valid return URL is present, just `${nonce}` otherwise. The URL state
+  // sent to GitHub stays just the nonce so the CSRF gate compare is
+  // unchanged.
+  const startUrl = new URL(request.url);
+  const rawReturn = startUrl.searchParams.get("return");
+  const validatedReturn = validateReturnUrl(rawReturn, request.url);
+  const cookieValue =
+    validatedReturn !== null
+      ? `${state}.${base64UrlEncode(new TextEncoder().encode(validatedReturn))}`
+      : state;
+
   const setCookie =
-    `${STATE_COOKIE_NAME}=${state}` +
+    `${STATE_COOKIE_NAME}=${cookieValue}` +
     `; HttpOnly` +
     `; Secure` +
     `; SameSite=Lax` +
@@ -160,9 +209,18 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
   const url = new URL(request.url);
   const urlState = url.searchParams.get("state");
   const cookies = parseCookieHeader(request.headers.get("Cookie"));
-  const cookieState = cookies[STATE_COOKIE_NAME];
+  const cookieState = cookies[STATE_COOKIE_NAME] ?? "";
 
-  if (!urlState || !cookieState || urlState !== cookieState) {
+  // Issue #91 / AC 5.3 — Cookie may carry an optional `${nonce}.${b64
+  // returnUrl}` payload. Split on the first `.` to extract the nonce
+  // for the CSRF gate; the suffix (if any) is the encoded return URL.
+  // Cookies without a `.` are the legacy/no-return shape and remain
+  // valid (graceful degradation for AC 3.5b non-regression).
+  const dotIndex = cookieState.indexOf(".");
+  const cookieNonce = dotIndex === -1 ? cookieState : cookieState.slice(0, dotIndex);
+  const encodedReturn = dotIndex === -1 ? null : cookieState.slice(dotIndex + 1);
+
+  if (!urlState || !cookieNonce || urlState !== cookieNonce) {
     return new Response("invalid state", { status: 400 });
   }
 
@@ -201,8 +259,27 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
     `; Path=/` +
     `; Max-Age=0`;
 
+  // Issue #91 / AC 5.3 — Decode the threaded return URL (if any) and
+  // re-validate same-origin. The defense in depth here forbids an
+  // attacker who somehow planted a state cookie with a cross-origin
+  // payload from steering the post-auth redirect away from this origin
+  // — even though /auth/start already same-origin-validates the
+  // incoming param, callback re-checks before honoring it.
+  let location = "/";
+  if (encodedReturn) {
+    try {
+      const decoded = new TextDecoder().decode(base64UrlDecode(encodedReturn));
+      const validated = validateReturnUrl(decoded, request.url);
+      if (validated !== null) {
+        location = validated;
+      }
+    } catch {
+      // Malformed encoding — fall back to "/" (graceful default).
+    }
+  }
+
   const headers = new Headers();
-  headers.set("Location", "/");
+  headers.set("Location", location);
   headers.append("Set-Cookie", sessionCookie);
   headers.append("Set-Cookie", clearStateCookie);
 

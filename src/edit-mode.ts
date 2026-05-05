@@ -37,6 +37,12 @@ const editModeEditors = new WeakMap<HTMLElement, Editor>();
 
 const EDIT_TOOLBAR_TESTID = 'edit-toolbar';
 
+// Issue #91 / AC 5.3 — sessionStorage key for the post-auth restore
+// flag. Set in attemptEditAction's 401-redirect path; consumed in
+// bootstrapWeb's auto-restore path. Exported so the bootstrap reader
+// and the writer agree on the literal key without duplicating it.
+export const PENDING_EDIT_KEY = 'hashly-pending-edit';
+
 function ensureEditToolbar(): void {
   if (document.querySelector(`[data-testid="${EDIT_TOOLBAR_TESTID}"]`)) return;
   const toolbar = document.createElement('div');
@@ -122,6 +128,21 @@ export async function attemptEditAction(host: HTMLElement): Promise<void> {
       // read-only. The full current href (including `?repo=...&path=
       // ...&ref=...`) round-trips through encodeURIComponent so the
       // post-auth callback can land back on the same spec.
+      //
+      // Issue #91 / AC 5.3 — Stash a one-shot pending-edit flag in
+      // sessionStorage BEFORE the redirect lands so bootstrapWeb can
+      // detect "we just returned from auth" on the next page load and
+      // auto-flip into edit mode + show the "your edit was paused"
+      // prompt. sessionStorage is per-tab and persists across the
+      // auth round-trip; the flag is consumed (cleared) on the
+      // restore path so reloads of the same tab don't re-trigger.
+      try {
+        sessionStorage.setItem(PENDING_EDIT_KEY, '1');
+      } catch {
+        // sessionStorage can throw in private browsing / quota-full
+        // edge cases. The redirect still proceeds; the user just
+        // won't get the auto-restore.
+      }
       const returnParam = encodeURIComponent(window.location.href);
       window.location.assign(`/auth/start?return=${returnParam}`);
     } finally {
