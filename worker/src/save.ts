@@ -71,7 +71,7 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
     );
   }
 
-  const { repo, path, ref, content, commitMessage } = body;
+  const { repo, path, ref, content, baseSha, commitMessage } = body;
   if (!repo || !path || !ref || typeof content !== "string") {
     return jsonResponse(
       { ok: false, kind: "other", message: "Missing required fields." },
@@ -87,11 +87,47 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
     "content-type": "application/json",
   };
 
-  // Try PUT contents on a save-branch. We pick a branch name first and
-  // try to create it; if either the branch-create or the contents-write
-  // 403s, we surface the no-write translation. (Other ACs will handle
-  // the success path; we keep this slice minimal — any 403 on a write
-  // path becomes the AC 6.7 structured response.)
+  // Issue #92 / AC 6.4 — Stale-SHA check, FAIL-FAST. Fetch the file's
+  // current blob SHA on the source ref BEFORE any write call. If it
+  // differs from the request's `baseSha`, return a structured
+  // `conflict` response and do NOT proceed. Without this fail-fast,
+  // every conflict would create a dead `hashly/spec-edit-*` branch.
+  //
+  // Scope-down per team-lead authorization: simple "any upstream
+  // change → conflict, user reloads" instead of three-way merge.
+  // False-positive conflicts (non-overlapping concurrent edits) are
+  // rare in the spec-edit persona and AC 6.5's reload prompt makes
+  // recovery cheap. Full diff3 is a v0.4 enhancement.
+  //
+  // Graceful fallback: if the GET errors (network, non-200, malformed
+  // body), we proceed with the write attempt. The user has already
+  // claimed an anchor via baseSha; the worst case is we miss a
+  // conflict, which is no worse than today's pre-AC-6.4 behavior.
+  let currentSha: string | undefined;
+  try {
+    const contentsResp = await fetch(
+      `https://api.github.com/repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+      { headers: ghHeaders },
+    );
+    if (contentsResp.status === 200) {
+      const contentsJson = (await contentsResp.json()) as { sha?: string };
+      currentSha = contentsJson?.sha;
+    }
+  } catch {
+    currentSha = undefined;
+  }
+  if (typeof currentSha === "string" && currentSha !== baseSha) {
+    return jsonResponse(
+      {
+        ok: false,
+        kind: "conflict",
+        message:
+          "An upstream change advanced this file since you started editing. Please reload to see the latest content and re-apply your edits.",
+      },
+      409,
+    );
+  }
+
   // Issue #92 / AC 6.2 — branch namespace `hashly/spec-edit-<timestamp>`.
   // The `/` is intentional Git namespace convention (cf. `feature/x`,
   // `release/y`); GitHub's POST /git/refs accepts it.

@@ -98,6 +98,37 @@ beforeAll(() => {
     )
     .persist();
 
+  // Issue #92 / AC 6.4 cross-pin — GET file contents on the source
+  // ref. AC 6.4 added a stale-SHA pre-check before any write call:
+  // worker fetches this endpoint, compares `sha` with the request's
+  // baseSha, and returns kind:'conflict' on mismatch. The success
+  // path needs the SHAs to MATCH so the worker proceeds to the
+  // writes — set `sha: FILE_SHA_ON_REF` to match VALID_BODY's
+  // `baseSha: FILE_SHA_ON_REF` below.
+  //
+  // Without this mock the stale-SHA fetch hits `disableNetConnect`
+  // and throws; the builder's AC 6.4 graceful-fallback handles
+  // that, but mocking explicitly makes the test fixture honest
+  // about the actual call sequence — and lets a future stricter
+  // impl (treat fetch error as 'other' kind) stay green here.
+  fetchMock
+    .get("https://api.github.com")
+    .intercept({
+      path: /^\/repos\/foo\/bar\/contents\/specs\/spec\.md(\?.*)?$/,
+      method: "GET",
+    })
+    .reply(
+      200,
+      JSON.stringify({
+        sha: FILE_SHA_ON_REF,
+        path: "specs/spec.md",
+        content: btoa("original content\n"),
+        encoding: "base64",
+      }),
+      { headers: { "content-type": "application/json" } },
+    )
+    .persist();
+
   // POST /git/refs — branch create. Captures the body so the test
   // can inspect the branch ref + base SHA.
   fetchMock
