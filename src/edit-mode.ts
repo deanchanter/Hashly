@@ -27,14 +27,38 @@
 // shape as v0.2 desktop's `getCurrentEditor()`.
 
 import type { Editor } from '@milkdown/core';
-import { _remountAsEditable, _remountAsReadOnly } from './viewer';
+import { _remountAsEditable, _remountAsReadOnly, getViewerMarkdown } from './viewer';
 import { parseSpecUrl } from './router';
+import { submitSave } from './save-flow';
+import {
+  clearSaveBanners,
+  renderSaveConflict,
+  renderSaveError,
+  renderSaveSuccess,
+} from './save-result';
 
 // Per-host edit-mode editor registry. Doubles as the idempotency
 // guard: a second call to `enterEditMode` for a host already in edit
 // mode is a no-op (no second remount, no second toolbar). WeakMap so
 // hosts removed from the DOM get GC'd.
 const editModeEditors = new WeakMap<HTMLElement, Editor>();
+
+// Issue #92 / AC 6.1 — per-host baseSha stash. Set by enterEditMode's
+// `opts.baseSha` and read by the Save click handler. WeakMap so hosts
+// removed from the DOM get GC'd. Absence (not set, or set to a non-
+// string) means "no anchor" — the click handler refuses to save in
+// that case (AC 6.4 stale-SHA safe default).
+const editModeBaseShas = new WeakMap<HTMLElement, string>();
+
+// Issue #92 / AC 6.1 — per-host in-flight lock. A second click
+// while the first POST is still pending is dropped (NOT queued).
+// Per-host (not module-global) so independent edit sessions don't
+// share a lock; this also matches the per-host editModeEditors /
+// editModeBaseShas registries above. When the host is removed
+// from the DOM (e.g., a test sets `document.body.innerHTML = ''`),
+// the WeakMap entry becomes GC-eligible and the next host gets a
+// fresh slot.
+const pendingSaves = new WeakMap<HTMLElement, Promise<unknown>>();
 
 const EDIT_TOOLBAR_TESTID = 'edit-toolbar';
 
@@ -50,21 +74,19 @@ function ensureEditToolbar(host: HTMLElement): void {
   toolbar.setAttribute('data-testid', EDIT_TOOLBAR_TESTID);
   toolbar.className = 'edit-toolbar';
 
-  // MVP affordance: a single Save button. AC 5.1 only pins the form
-  // factor (toolbar with at least one <button>); the actual save flow
-  // lands in #92, so this stays a placeholder for now.
-  //
-  // Issue #91 fix-loop-1 / fix #6 — disabled until #92 lands so a
-  // click doesn't look broken. aria-disabled mirrors the .disabled
-  // property so screen readers announce the state; title gives
-  // hovering users the rationale.
+  // Issue #92 / AC 6.1 — Save button is now active. Click handler
+  // posts the live editor body + baseSha anchor to /api/save via
+  // `submitSave`. The button is scoped to THIS host's toolbar
+  // (closure-captured) so a manually-injected stray button with the
+  // same testid is ignored.
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.textContent = 'Save';
   saveBtn.setAttribute('data-testid', 'edit-toolbar-save');
-  saveBtn.disabled = true;
-  saveBtn.setAttribute('aria-disabled', 'true');
-  saveBtn.title = 'Save flow ships in #92 — disabled for now.';
+  saveBtn.disabled = false;
+  saveBtn.addEventListener('click', () => {
+    onSaveClick(host);
+  });
   toolbar.appendChild(saveBtn);
 
   // Issue #91 fix-loop-3 / fix #1 — Inline the toolbar inside the
@@ -78,7 +100,17 @@ function ensureEditToolbar(host: HTMLElement): void {
   host.prepend(toolbar);
 }
 
-export async function enterEditMode(host: HTMLElement): Promise<void> {
+export interface EnterEditModeOptions {
+  // Issue #92 / AC 6.1 — Captured-at-edit-entry SHA for stale-SHA
+  // detection (AC 6.4). The Save click handler reads this stash; if
+  // absent, the handler refuses to save (AC 6.1 + AC 6.4 safe default).
+  baseSha?: string;
+}
+
+export async function enterEditMode(
+  host: HTMLElement,
+  opts: EnterEditModeOptions = {},
+): Promise<void> {
   // Idempotency floor: already in edit mode → benign no-op.
   if (editModeEditors.has(host)) return;
 
@@ -90,7 +122,108 @@ export async function enterEditMode(host: HTMLElement): Promise<void> {
   if (editor === null) return;
 
   editModeEditors.set(host, editor);
+  if (typeof opts.baseSha === 'string' && opts.baseSha.length > 0) {
+    editModeBaseShas.set(host, opts.baseSha);
+  }
   ensureEditToolbar(host);
+}
+
+// Issue #92 / AC 6.1 — Save button click handler. Scoped to the host
+// captured at toolbar-mount time. Reads URL coords + live editor body
+// + baseSha anchor and POSTs via `submitSave`. Refuses to save when
+// any of those are missing (defensive floors).
+function onSaveClick(host: HTMLElement): void {
+  if (pendingSaves.has(host)) return;
+  if (!editModeEditors.has(host)) return; // not in edit mode
+
+  const baseSha = editModeBaseShas.get(host);
+  if (typeof baseSha !== 'string' || baseSha.length === 0) {
+    // AC 6.4 safe default — no anchor, no save. Without baseSha the
+    // worker can't detect upstream conflicts; refusing protects the
+    // user from silently overwriting changes they never saw.
+    return;
+  }
+
+  const parsed = parseSpecUrl(document.URL);
+  if ('error' in parsed) return; // can't compose the request
+
+  const content = getViewerMarkdown(host);
+  if (content === null) return; // no viewer mounted
+
+  // fix-loop iter-1 / fix #14 — clear stale save-* banners
+  // synchronously, BEFORE the fetch. Without this, a user retrying
+  // after a failure sees the stale error banner persist for the
+  // entire network round-trip; the next renderSave* clears it only
+  // when the fetch resolves.
+  clearSaveBanners(host);
+
+  // fix-loop iter-1 / fix #7 — in-flight visual state. Query the
+  // button at click time (not closure-captured) so a re-mounted
+  // toolbar doesn't leave us holding a stale node. Restoration
+  // happens in the `finally` so it covers success, structured
+  // failure (no-write / conflict / network / other), AND any
+  // unexpected throw.
+  const saveBtn = document.querySelector<HTMLButtonElement>(
+    `[data-testid="edit-toolbar-save"]`,
+  );
+  const originalText = saveBtn?.textContent ?? 'Save';
+
+  const promise = (async () => {
+    try {
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.setAttribute('aria-busy', 'true');
+        saveBtn.textContent = 'Saving…';
+      }
+
+      const result = await submitSave({
+        repo: parsed.repo,
+        path: parsed.path,
+        ref: parsed.ref,
+        content,
+        baseSha,
+      });
+      // Issue #92 / AC 6.3 — render the success banner with the PR URL
+      // round-tripped from the worker response.
+      // Issue #92 / AC 6.5 — render the conflict banner with a fresh-
+      // read getContent so the Copy button captures any post-render
+      // edits the user made before clicking.
+      // fix-loop iter-1 / fix #2 — wire the remaining error kinds
+      // (no-write / network / unauth / other) to renderSaveError.
+      // Without this, AC 6.7's literal phrase never reaches the user
+      // (worker translates the GitHub 403 correctly, but the click
+      // handler discards the message).
+      if (result.ok) {
+        renderSaveSuccess(host, result.prUrl);
+      } else if (result.kind === 'conflict') {
+        renderSaveConflict(host, {
+          getContent: () => getViewerMarkdown(host) ?? '',
+        });
+      } else if (result.kind === 'network') {
+        renderSaveError(
+          host,
+          "Couldn't reach the server — please check your connection and try again.",
+        );
+      } else if (result.kind === 'unauth') {
+        renderSaveError(
+          host,
+          'Your session expired — please sign back in and retry.',
+        );
+      } else {
+        // 'no-write' or 'other' — the worker's message is the
+        // user-facing copy. AC 6.7's verbatim phrase round-trips here.
+        renderSaveError(host, result.message);
+      }
+    } finally {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.setAttribute('aria-busy', 'false');
+        saveBtn.textContent = originalText;
+      }
+      pendingSaves.delete(host);
+    }
+  })();
+  pendingSaves.set(host, promise);
 }
 
 export function getEditModeEditor(host: HTMLElement): Editor | null {

@@ -7,6 +7,7 @@ import {
 } from "./auth";
 import type { Env } from "./env";
 import { handleGitHubProxy } from "./proxy";
+import { handleSave } from "./save";
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
@@ -38,6 +39,11 @@ export default {
     // auth gate (401 without session) carries through naturally.
     if (url.pathname.startsWith("/api/github/")) {
       return handleGitHubProxy(request, env);
+    }
+
+    // Issue #92 / AC 6.7 — `POST /api/save` save endpoint.
+    if (url.pathname === "/api/save" && request.method === "POST") {
+      return handleSave(request, env);
     }
 
     return new Response("not found", { status: 404 });

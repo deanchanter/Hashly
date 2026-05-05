@@ -682,52 +682,17 @@ describe('Issue #91 fix-loop-1 / fix #5 — back-button-cancel does NOT infinite
 });
 
 // ============================================================================
-// Fix #6 — disable the edit-toolbar Save button
+// Fix #6 — Save button placeholder
 // ============================================================================
 //
-// Reviewer finding: Save button is enabled but has no click handler.
-// Click does nothing — looks broken.
-//
-// Pinned: button.disabled === true AND aria-disabled === "true"
-// AND title attribute mentions #92 / "save" so a user hovering
-// understands.
-
-describe('Issue #91 fix-loop-1 / fix #6 — toolbar Save button is disabled (placeholder for #92)', () => {
-  let host: HTMLDivElement;
-
-  beforeEach(() => {
-    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
-    document.body.innerHTML = '';
-    host = document.createElement('div');
-    host.id = 'editor';
-    document.body.appendChild(host);
-  });
-
-  it('after enterEditMode, the [data-testid="edit-toolbar-save"] button has disabled === true', async () => {
-    // Pin both `disabled` (HTMLButtonElement property + DOM
-    // attribute) and `aria-disabled="true"` (a11y) so screen
-    // readers announce the button as disabled.
-    const { mountViewer } = await import('../viewer');
-    await mountViewer(host, '# Spec');
-    const { enterEditMode } = (await import('../edit-mode')) as unknown as {
-      enterEditMode: (h: HTMLElement) => Promise<void>;
-    };
-    await enterEditMode(host);
-
-    const saveBtn = document.querySelector<HTMLButtonElement>(
-      '[data-testid="edit-toolbar-save"]',
-    );
-    expect(saveBtn, 'precondition: save button must exist after enterEditMode').not.toBeNull();
-    expect(
-      saveBtn!.disabled,
-      'expected button.disabled === true (Issue #91 fix #6 — the Save flow ships in #92; until then the button must be visually + functionally disabled to avoid looking broken).',
-    ).toBe(true);
-    expect(
-      saveBtn!.getAttribute('aria-disabled'),
-      'expected aria-disabled="true" so screen readers announce the disabled state.',
-    ).toBe('true');
-  });
-});
+// Original fix-loop-1 / fix #6 pinned `button.disabled === true` because
+// the save flow hadn't shipped yet (clicking the button did nothing).
+// That pin INVERTS now that Issue #92 / AC 6.1 lands the click handler:
+// the new contract is in `src/__tests__/save-flow-click.test.ts`
+// (button enabled in edit mode, click → POST /api/save). The original
+// describe-block was deleted in the AC 6.1 commit; this header
+// comment is a code-search breadcrumb so a future grep for "fix #6"
+// still lands here with the migration target.
 
 // ============================================================================
 // Fix #7 — sign-out clears stale view-only-lock + post-auth-prompt
