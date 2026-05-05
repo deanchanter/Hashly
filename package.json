@@ -29,8 +29,5 @@
   },
   "engines": {
     "node": "^20.19 || >=22.12"
-  },
-  "workspaces": [
-    "worker"
-  ]
+  }
 }
