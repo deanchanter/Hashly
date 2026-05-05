@@ -422,25 +422,21 @@ body {
  * rebinds automatically.
  */
 
-/* Issue #91 fix-loop-2 / fix #3 — Anchor the toolbar BELOW the
- * viewer-header (≈40px tall: 1.8rem padding + ~1.4*0.9rem text).
- * The round-1 `top: 0.75rem` (12px) overlapped `.viewer-header__coords`
- * and hid the spec coordinates the moment the user entered edit mode.
- * 4rem (64px) clears the header with a comfortable gap on both
- * desktop and reduced-density layouts. */
+/* Issue #91 fix-loop-3 / fix #1 — Inline the toolbar inside the
+ * editor host (parented to #editor) instead of fixed-positioned over
+ * the page. Iter-2 anchored at top:4rem to dodge the header but the
+ * post-auth-prompt collided next; the inlining eliminates the entire
+ * fixed-position UI-collision class. Visual seam comes from the
+ * paper-2 surface + bottom border, matching the other inline banners
+ * (.hashly-view-only-lock, .hashly-post-auth-prompt). */
 .edit-toolbar {
-  position: fixed;
-  top: 4rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
   display: flex;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
   background: var(--paper-2);
   border: 1px solid var(--rule);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(20, 32, 27, 0.12);
 }
 
 .edit-toolbar button {

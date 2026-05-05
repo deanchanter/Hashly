@@ -405,17 +405,24 @@ describe('Issue #91 fix-loop-1 / fix #3 — CSS for new components', () => {
     }
   };
 
-  it('.edit-toolbar has positioning + padding so it sits above the editor (not at page bottom)', () => {
-    // Toolbar must be visually distinct + anchored. Pin "position"
-    // and "padding" presence; specific values are designer-discretion.
+  it('.edit-toolbar has padding + visual distinction (matches the other component banners)', () => {
+    // Iter-3 fix #1 inlined the toolbar (parented to editor host
+    // instead of document.body). The original "must be position:
+    // fixed/sticky/absolute" pin was meant to keep the toolbar
+    // visible — but inlining inside the editor host (in normal
+    // flow, above .ProseMirror) achieves the same goal without
+    // the fixed-position UI-collision class of bugs (toolbar vs
+    // header, toolbar vs post-auth-prompt). The new pin: padding
+    // + a visual treatment (background or border) — same shape as
+    // the lock + prompt rules.
     const css = stripCssComments(readStyleCss());
     const body = findRuleBody(css, '.edit-toolbar');
     expect(body, 'expected a .edit-toolbar rule in src/style.css').not.toBeNull();
-    expect(
-      /position:(fixed|sticky|absolute)/.test(body!),
-      `expected position:fixed|sticky|absolute on .edit-toolbar so it floats above the editor. Got: ${body}`,
-    ).toBe(true);
     expect(body!).toContain('padding:');
+    expect(
+      body!.includes('background') || body!.includes('border'),
+      `expected .edit-toolbar to have a background or border so it's visually distinct from the rendered prose below it (iter-3 fix #1 — inlined toolbar still needs a visual seam). Got: ${body}`,
+    ).toBe(true);
   });
 
   it('.session-indicator + descendants are styled (avatar 24x24 circle, sign-out button rule)', () => {

@@ -44,7 +44,7 @@ const EDIT_TOOLBAR_TESTID = 'edit-toolbar';
 // and the writer agree on the literal key without duplicating it.
 export const PENDING_EDIT_KEY = 'hashly-pending-edit';
 
-function ensureEditToolbar(): void {
+function ensureEditToolbar(host: HTMLElement): void {
   if (document.querySelector(`[data-testid="${EDIT_TOOLBAR_TESTID}"]`)) return;
   const toolbar = document.createElement('div');
   toolbar.setAttribute('data-testid', EDIT_TOOLBAR_TESTID);
@@ -67,7 +67,15 @@ function ensureEditToolbar(): void {
   saveBtn.title = 'Save flow ships in #92 — disabled for now.';
   toolbar.appendChild(saveBtn);
 
-  document.body.appendChild(toolbar);
+  // Issue #91 fix-loop-3 / fix #1 — Inline the toolbar inside the
+  // editor host (was: document.body). The fixed-position shape kept
+  // colliding with above-fold UI (iter-2 fix #3: header overlap;
+  // iter-3 fix #1: post-auth-prompt overlap). Parenting to the host
+  // and letting the toolbar live in normal flow eliminates the entire
+  // fixed-position collision class. host.prepend so the toolbar sits
+  // above the .ProseMirror; if a prompt is also prepended later, the
+  // prompt ends up above the toolbar (correct UX: info → action bar).
+  host.prepend(toolbar);
 }
 
 export async function enterEditMode(host: HTMLElement): Promise<void> {
@@ -82,7 +90,7 @@ export async function enterEditMode(host: HTMLElement): Promise<void> {
   if (editor === null) return;
 
   editModeEditors.set(host, editor);
-  ensureEditToolbar();
+  ensureEditToolbar(host);
 }
 
 export function getEditModeEditor(host: HTMLElement): Editor | null {
@@ -125,19 +133,25 @@ export async function exitEditMode(host: HTMLElement): Promise<void> {
 //      the first call's first await releases control before the
 //      WeakMap.set lands.
 //
-// Issue #91 fix-loop-2 / fix #2 — Terminal-state return so the
-// bootstrap restore branch can branch on "did edit mode actually
-// activate" before rendering the post-auth prompt. Without this
-// distinction the prompt stacks on top of the view-only-lock or
-// auth-cancelled banner, contradicting them.
+// Issue #91 fix-loop-2 / fix #2 + fix-loop-3 / fix #2 — Terminal-state
+// return so the bootstrap restore branch can branch on "did edit
+// mode actually activate" before rendering the post-auth prompt
+// (iter-2), AND so the keydown listener can self-remove on the
+// locked terminal too (iter-3, otherwise every keystroke at OS
+// autorepeat fires another fetch chain — ~85s of held-down typing
+// exhausts GitHub's 5000/hr install rate limit).
 //
-// Only the success path returns a truthy sentinel; every other
-// terminal (locked, cancelled, redirected, network error) resolves
-// to `undefined`. That keeps the AC 5.2 / AC 5.5 defensive-floor
-// tests (which pin `resolves.toBeUndefined()`) green while still
-// giving the bootstrap an unambiguous "did we flip into edit mode?"
-// signal via `result === 'success'`.
-export type EditAttemptResult = 'success' | undefined;
+// Values:
+//   - 'success' → 200 + push:true → enterEditMode fired
+//   - 'locked'  → 200 + push:false (DETERMINISTIC denial) →
+//                 renderViewOnlyLock; keydown listener removes
+//   - undefined → everything else (cancelled / redirected / network
+//                 error / perms-fetch error / missing-field / 4xx /
+//                 5xx). Keeps AC 5.2 / 5.5 defensive-floor tests
+//                 (which pin `resolves.toBeUndefined()`) green.
+//                 Listener stays attached so transient failures can
+//                 be retried by typing again.
+export type EditAttemptResult = 'success' | 'locked' | undefined;
 
 // Module-local pending lock — `null` when no attempt is in-flight,
 // otherwise the in-flight Promise. A second call while the first is
@@ -180,22 +194,21 @@ export async function attemptEditAction(
         return undefined;
       }
       if (response.ok) {
-        // Issue #91 / AC 5.5 — Check write access before unlocking edit
-        // mode. The user has a live session but may be read-only on
-        // this repo (e.g., a non-collaborator, or a collaborator with
-        // read-only perms). The frontend hits GET /api/github/repos/
-        // {owner}/{repo} (worker proxy carries the access token) and
-        // inspects `permissions.push`. Fail-safe: only an explicit
-        // `push: true` unlocks; anything else (push:false, missing
-        // field, non-2xx, network error) keeps the editor read-only
-        // and surfaces the view-only-lock banner.
-        const canEdit = await checkWriteAccess();
-        if (canEdit) {
+        // Issue #91 / AC 5.5 + fix-loop-3 / fix #2 — Tristate access
+        // check. 'allowed' unlocks edit mode; 'denied' renders the
+        // view-only lock and returns the 'locked' terminal so the
+        // keydown listener can self-remove (every subsequent
+        // keystroke would otherwise refire the chain). 'unknown'
+        // (network error / 4xx / 5xx / missing field) ALSO renders
+        // the lock but returns undefined — listener stays attached
+        // so transient failures can be retried by typing.
+        const access = await checkWriteAccess();
+        if (access === 'allowed') {
           await enterEditMode(host);
           return 'success';
         }
         renderViewOnlyLock(host);
-        return undefined;
+        return access === 'denied' ? 'locked' : undefined;
       }
       // 401 / 5xx / any non-2xx → treat as unauthed.
       //
@@ -253,34 +266,44 @@ function renderAuthCancelledBanner(host: HTMLElement): void {
   host.prepend(banner);
 }
 
-// Issue #91 / AC 5.5 — Resolve write access for the current spec URL.
-// Returns `true` only on an explicit `permissions.push === true` from
-// the worker proxy; everything else (missing field, non-2xx, network
-// error, malformed JSON) returns `false`. Fail-safe: never unlock
-// without confirmation.
-async function checkWriteAccess(): Promise<boolean> {
+// Issue #91 / AC 5.5 + fix-loop-3 / fix #2 — Resolve write access for
+// the current spec URL. Three-state result so the keystroke-storm
+// fix can distinguish "deterministic deny" (server said push:false)
+// from "couldn't determine" (network error, 4xx/5xx, missing field).
+// Only the deterministic-deny case warrants removing the JIT keydown
+// listener — transient errors should let the user retry.
+//
+//   - 'allowed' → response is 200 with `permissions.push === true`
+//   - 'denied'  → response is 200 with `permissions.push === false`
+//   - 'unknown' → any other shape (parse error, network throw, 4xx,
+//                 5xx, missing-field, malformed-URL). Caller treats
+//                 this as view-only too, but keeps the listener
+//                 attached for retries.
+async function checkWriteAccess(): Promise<'allowed' | 'denied' | 'unknown'> {
   // Use `document.URL` rather than `window.location.href` so the live
   // document URL is read (history.replaceState updates document.URL
   // even when test fixtures stub out window.location). They agree in
   // production; only diverge in test sandboxes that override location.
   const parsed = parseSpecUrl(document.URL);
-  if ('error' in parsed) return false;
+  if ('error' in parsed) return 'unknown';
   let response: Response | undefined;
   try {
     response = await fetch(`/api/github/repos/${parsed.repo}`, {
       credentials: 'same-origin',
     });
   } catch {
-    return false;
+    return 'unknown';
   }
-  if (!response || !response.ok) return false;
+  if (!response || !response.ok) return 'unknown';
   try {
     const body = (await response.json()) as {
       permissions?: { push?: unknown };
     };
-    return body.permissions?.push === true;
+    if (body.permissions?.push === true) return 'allowed';
+    if (body.permissions?.push === false) return 'denied';
+    return 'unknown';
   } catch {
-    return false;
+    return 'unknown';
   }
 }
 
