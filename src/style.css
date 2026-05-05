@@ -21,6 +21,15 @@
   --accent: #1e3a2f;
   --accent-2: #c9a24b;
 
+  /* Issue #92 fix-loop iter-2 / fix #2 — dark-mode-stable success
+   * and danger tokens. The light/dark values must DIFFER so the
+   * banner color cues survive the prefers-color-scheme rebind
+   * (`--accent` flips to gold in dark, collapsing into `--accent-2`
+   * — these dedicated tokens prevent that collapse for the save-*
+   * banner family). */
+  --success: #1e3a2f;
+  --danger: #b04040;
+
   /* Typography stacks. Brand fonts fall back to system serifs/sans
    * so the app renders correctly even before self-hosted woff2 files
    * land (PRD: dev loads via Google Fonts; production self-hosted —
@@ -44,6 +53,13 @@
     --muted: #7c8479;
     --accent: #c9a24b;
     --accent-2: #c9a24b;
+
+    /* Issue #92 fix-loop iter-2 / fix #2 — dark-mode overrides for
+     * the save-* banner border-lefts. Lighter shades so the border
+     * stays legible against dark paper (the light-mode forest /
+     * auburn would be invisible). */
+    --success: #7ab87a;
+    --danger: #e08a8a;
   }
 }
 
@@ -544,7 +560,9 @@ body {
   padding: 0.75rem 1rem;
   background: var(--paper-2);
   border: 1px solid var(--rule);
-  border-left: 4px solid var(--accent);
+  /* iter-2 / fix #2 — retargeted from --accent (which collapses to
+   * gold in dark mode and merges with conflict's --accent-2). */
+  border-left: 4px solid var(--success);
   border-radius: 4px;
   color: var(--ink);
   font-family: var(--font-body);
@@ -557,7 +575,9 @@ body {
   padding: 0.75rem 1rem;
   background: var(--paper-2);
   border: 1px solid var(--rule);
-  border-left: 4px solid var(--ink-2);
+  /* iter-2 / fix #2 — retargeted from --ink-2 (a text color,
+   * semantically wrong for "error red") to dedicated --danger. */
+  border-left: 4px solid var(--danger);
   border-radius: 4px;
   color: var(--ink);
   font-family: var(--font-body);

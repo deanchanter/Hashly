@@ -22,6 +22,21 @@ const SAVE_CONFLICT_TESTID = 'save-conflict';
 const CONFLICT_PHRASE =
   'your edit and an upstream change overlap; please reload';
 
+// fix-loop iter-2 / fix #2 — icon glyph at the leading edge of each
+// banner. Survives any CSS palette-token collapse (Unicode is mode-
+// stable by construction) and helps colorblind users distinguish
+// kinds where border-left color alone is insufficient. `aria-hidden`
+// because the banner's text content already carries the meaning;
+// the glyph is a redundant visual cue.
+function makeBannerIcon(glyph: string): HTMLElement {
+  const icon = document.createElement('span');
+  icon.setAttribute('data-testid', 'banner-icon');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.className = 'hashly-banner-icon';
+  icon.textContent = glyph;
+  return icon;
+}
+
 // fix-loop iter-1 / fix #14 — exported so the click handler can clear
 // stale banners synchronously at the top of `onSaveClick`, before the
 // network round-trip starts. Without that synchronous clear, a user
@@ -59,7 +74,8 @@ export function renderSaveError(host: HTMLElement, message: string): void {
   banner.setAttribute('data-testid', SAVE_ERROR_TESTID);
   banner.setAttribute('role', 'alert');
   banner.className = 'hashly-save-error';
-  banner.textContent = message;
+  banner.appendChild(makeBannerIcon('✕'));
+  banner.appendChild(document.createTextNode(message));
 
   host.prepend(banner);
 }
@@ -71,6 +87,7 @@ export function renderSaveSuccess(host: HTMLElement, prUrl: string): void {
   banner.setAttribute('data-testid', SAVE_SUCCESS_TESTID);
   banner.setAttribute('role', 'status');
   banner.className = 'hashly-save-success';
+  banner.appendChild(makeBannerIcon('✓'));
 
   // The AC literal is "view on GitHub". target="_blank" preserves
   // the user's edit context; rel="noopener noreferrer" mirrors the
@@ -121,6 +138,7 @@ export function renderSaveConflict(
   banner.setAttribute('data-testid', SAVE_CONFLICT_TESTID);
   banner.setAttribute('role', 'alert');
   banner.className = 'hashly-save-conflict';
+  banner.appendChild(makeBannerIcon('⚠'));
 
   const message = document.createElement('span');
   message.textContent = CONFLICT_PHRASE;
