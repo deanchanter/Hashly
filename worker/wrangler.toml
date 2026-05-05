@@ -2,6 +2,11 @@ name = "hashly-worker"
 main = "src/index.ts"
 compatibility_date = "2025-05-01"
 
+# Public, non-secret config. Real secrets go through `wrangler secret put`.
+[vars]
+AUTH_METHOD = "app"
+GITHUB_APP_SLUG = "hashly-md"
+
 # Routes will be configured at deploy time; placeholder only.
 # routes = [
 #   { pattern = "api.hashly.dev/*", zone_name = "hashly.dev" }
