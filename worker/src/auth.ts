@@ -45,6 +45,41 @@ function base64Decode(b64: string): Uint8Array {
   return out;
 }
 
+/** URL-safe base64 → Uint8Array. Inverse of `base64UrlEncode`. */
+function base64UrlDecode(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), "=");
+  return base64Decode(padded);
+}
+
+/**
+ * Issue #91 / AC 5.3 — Same-origin validation for the `return` query param.
+ *
+ * Returns the validated return URL string (the original input shape, so a
+ * relative path stays relative, an absolute URL stays absolute) or `null`
+ * if the URL is missing, empty, malformed, or cross-origin.
+ *
+ * Open-redirect protection: a request like `?return=https://evil.com/foo`
+ * or `?return=//evil.com/foo` would let an attacker post-auth land the
+ * user on a controlled domain with the auth flow visually intact. We
+ * reject anything whose parsed origin doesn't match the request URL's
+ * origin. Relative paths parse against the request URL and are accepted.
+ */
+function validateReturnUrl(
+  returnUrl: string | null,
+  requestUrl: string,
+): string | null {
+  if (!returnUrl) return null;
+  try {
+    const parsed = new URL(returnUrl, requestUrl);
+    const reqOrigin = new URL(requestUrl).origin;
+    if (parsed.origin !== reqOrigin) return null;
+    return returnUrl;
+  } catch {
+    return null;
+  }
+}
+
 /** Mint a fresh CSRF state / session nonce — 24 random bytes → 32 char base64url. */
 function mintNonce(): string {
   const buf = new Uint8Array(24);
@@ -115,7 +150,49 @@ async function exchangeInstallationToken(
   return (await res.json()) as InstallTokenResponse;
 }
 
-export async function handleAuthStart(_request: Request, env: Env): Promise<Response> {
+interface InstallationUserInfo {
+  login: string;
+  avatar_url: string;
+}
+
+/**
+ * Issue #91 / AC 5.4 — Resolve the installation owner (user/org) so the
+ * frontend can render an avatar in the persistent header. In `app` mode
+ * the worker holds an installation token, not a user OAuth token, so we
+ * read the installation owner via `GET /app/installations/{id}` with
+ * the App JWT. Failures surface as `null` (graceful degradation — the
+ * session is still valid; the avatar just won't render).
+ */
+async function fetchInstallationUser(
+  installationId: string,
+  appJwt: string,
+): Promise<InstallationUserInfo | null> {
+  try {
+    const res = await fetch(
+      `https://api.github.com/app/installations/${installationId}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${appJwt}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "hashly-worker",
+        },
+      },
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      account?: { login?: unknown; avatar_url?: unknown };
+    };
+    const login = json.account?.login;
+    const avatar_url = json.account?.avatar_url;
+    if (typeof login !== "string" || typeof avatar_url !== "string") return null;
+    return { login, avatar_url };
+  } catch {
+    return null;
+  }
+}
+
+export async function handleAuthStart(request: Request, env: Env): Promise<Response> {
   const state = mintNonce();
   let location: string;
   if (env.AUTH_METHOD === "oauth-app") {
@@ -129,8 +206,22 @@ export async function handleAuthStart(_request: Request, env: Env): Promise<Resp
     location = `https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new?state=${state}`;
   }
 
+  // Issue #91 / AC 5.3 — Thread the `return` URL through the OAuth round
+  // trip. Validated same-origin here; stashed in the state cookie next to
+  // the CSRF nonce. Format: `${nonce}.${base64url(returnUrl)}` when a
+  // valid return URL is present, just `${nonce}` otherwise. The URL state
+  // sent to GitHub stays just the nonce so the CSRF gate compare is
+  // unchanged.
+  const startUrl = new URL(request.url);
+  const rawReturn = startUrl.searchParams.get("return");
+  const validatedReturn = validateReturnUrl(rawReturn, request.url);
+  const cookieValue =
+    validatedReturn !== null
+      ? `${state}.${base64UrlEncode(new TextEncoder().encode(validatedReturn))}`
+      : state;
+
   const setCookie =
-    `${STATE_COOKIE_NAME}=${state}` +
+    `${STATE_COOKIE_NAME}=${cookieValue}` +
     `; HttpOnly` +
     `; Secure` +
     `; SameSite=Lax` +
@@ -160,9 +251,18 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
   const url = new URL(request.url);
   const urlState = url.searchParams.get("state");
   const cookies = parseCookieHeader(request.headers.get("Cookie"));
-  const cookieState = cookies[STATE_COOKIE_NAME];
+  const cookieState = cookies[STATE_COOKIE_NAME] ?? "";
 
-  if (!urlState || !cookieState || urlState !== cookieState) {
+  // Issue #91 / AC 5.3 — Cookie may carry an optional `${nonce}.${b64
+  // returnUrl}` payload. Split on the first `.` to extract the nonce
+  // for the CSRF gate; the suffix (if any) is the encoded return URL.
+  // Cookies without a `.` are the legacy/no-return shape and remain
+  // valid (graceful degradation for AC 3.5b non-regression).
+  const dotIndex = cookieState.indexOf(".");
+  const cookieNonce = dotIndex === -1 ? cookieState : cookieState.slice(0, dotIndex);
+  const encodedReturn = dotIndex === -1 ? null : cookieState.slice(dotIndex + 1);
+
+  if (!urlState || !cookieNonce || urlState !== cookieNonce) {
     return new Response("invalid state", { status: 400 });
   }
 
@@ -172,17 +272,31 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
   const appJwt = await makeAppJwt(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
   const tokenResponse = await exchangeInstallationToken(installationId, appJwt);
 
+  // Issue #91 / AC 5.4 — Enrich the KV record with the installation
+  // owner's login + avatar so /api/session-status can surface user
+  // identity to the frontend (avatar in the persistent header).
+  // Failure surfaces as `null` and the record is still written without
+  // user info — the session stays valid, just without the avatar.
+  const userInfo = await fetchInstallationUser(installationId, appJwt);
+
   // Mint an opaque session ID and store the token server-side.
   const sessionId = mintNonce();
-  await env.SESSIONS.put(
-    sessionId,
-    JSON.stringify({
-      access_token: tokenResponse.token,
-      installation_id: installationId,
-      expires_at: tokenResponse.expires_at,
-    }),
-    { expirationTtl: SESSION_COOKIE_MAX_AGE_SECONDS },
-  );
+  const record: {
+    access_token: string;
+    installation_id: string;
+    expires_at: string;
+    user?: InstallationUserInfo;
+  } = {
+    access_token: tokenResponse.token,
+    installation_id: installationId,
+    expires_at: tokenResponse.expires_at,
+  };
+  if (userInfo !== null) {
+    record.user = userInfo;
+  }
+  await env.SESSIONS.put(sessionId, JSON.stringify(record), {
+    expirationTtl: SESSION_COOKIE_MAX_AGE_SECONDS,
+  });
 
   const sessionCookie =
     `${SESSION_COOKIE_NAME}=${sessionId}` +
@@ -201,12 +315,87 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
     `; Path=/` +
     `; Max-Age=0`;
 
+  // Issue #91 / AC 5.3 — Decode the threaded return URL (if any) and
+  // re-validate same-origin. The defense in depth here forbids an
+  // attacker who somehow planted a state cookie with a cross-origin
+  // payload from steering the post-auth redirect away from this origin
+  // — even though /auth/start already same-origin-validates the
+  // incoming param, callback re-checks before honoring it.
+  let location = "/";
+  if (encodedReturn) {
+    try {
+      const decoded = new TextDecoder().decode(base64UrlDecode(encodedReturn));
+      const validated = validateReturnUrl(decoded, request.url);
+      if (validated !== null) {
+        location = validated;
+      }
+    } catch {
+      // Malformed encoding — fall back to "/" (graceful default).
+    }
+  }
+
   const headers = new Headers();
-  headers.set("Location", "/");
+  headers.set("Location", location);
   headers.append("Set-Cookie", sessionCookie);
   headers.append("Set-Cookie", clearStateCookie);
 
   return new Response(null, { status: 302, headers });
+}
+
+/**
+ * Issue #91 / AC 5.2 — `GET /api/session-status` is the JIT auth gate.
+ *
+ * The frontend hits this before flipping into edit mode and branches on
+ * the status: 200 → enter edit mode, 401 → redirect to `/auth/start`.
+ * Cookie is HttpOnly so JS can't read it directly; the worker is the
+ * only authority on whether a live session exists.
+ *
+ * Pinned invariants:
+ *   - empty / missing / unrecognized cookie → 401 (no session)
+ *   - cookie maps to a live KV record → 200 with a JSON body
+ *   - access token NEVER appears in the response body or any header
+ *     (AC 3.10 token-leak invariant carried into this surface)
+ *
+ * AC 5.4 will enrich the 200 body with `{user: {login, avatar_url}}`
+ * for the avatar indicator. For AC 5.2 the minimal viable JSON shape
+ * is `{ok: true}` — JSON-parseable so the future enrichment stays
+ * additive.
+ */
+export async function handleSessionStatus(request: Request, env: Env): Promise<Response> {
+  const cookies = parseCookieHeader(request.headers.get("Cookie"));
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+  if (!sessionId) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  const record = await env.SESSIONS.get(sessionId);
+  if (!record) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  // Issue #91 / AC 5.4 — Surface user info (login + avatar_url) when
+  // the KV record carries it. The 200 body is exclusively user-facing
+  // identity data; the access token never enters this path.
+  const body: { ok: true; user?: InstallationUserInfo } = { ok: true };
+  try {
+    const parsed = JSON.parse(record) as {
+      user?: { login?: unknown; avatar_url?: unknown };
+    };
+    if (
+      parsed.user &&
+      typeof parsed.user.login === "string" &&
+      typeof parsed.user.avatar_url === "string"
+    ) {
+      body.user = {
+        login: parsed.user.login,
+        avatar_url: parsed.user.avatar_url,
+      };
+    }
+  } catch {
+    // Malformed KV record — fall through with `{ok: true}` only.
+  }
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /**

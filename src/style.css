@@ -414,3 +414,120 @@ body {
 .viewer-error--other {
   border-left-color: var(--accent);
 }
+
+/* Issue #91 fix-loop-1 / fix #3 — brand-aligned styling for the
+ * v0.3 web-mode components: edit toolbar, session indicator (avatar
+ * + sign-out), view-only lock banner, post-auth prompt, auth-cancel
+ * banner. All values come from brand palette tokens so dark mode
+ * rebinds automatically.
+ */
+
+/* Issue #91 fix-loop-3 / fix #1 — Inline the toolbar inside the
+ * editor host (parented to #editor) instead of fixed-positioned over
+ * the page. Iter-2 anchored at top:4rem to dodge the header but the
+ * post-auth-prompt collided next; the inlining eliminates the entire
+ * fixed-position UI-collision class. Visual seam comes from the
+ * paper-2 surface + bottom border, matching the other inline banners
+ * (.hashly-view-only-lock, .hashly-post-auth-prompt). */
+.edit-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+.edit-toolbar button {
+  padding: 0.35rem 0.85rem;
+  font: inherit;
+  font-family: var(--font-body);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.edit-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.session-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.session-indicator__avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: var(--paper-2);
+  color: var(--ink-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  overflow: hidden;
+}
+
+.session-indicator__sign-out {
+  padding: 0.3rem 0.7rem;
+  font: inherit;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.session-indicator__sign-out:hover {
+  background: var(--paper-2);
+}
+
+.hashly-view-only-lock {
+  max-width: 720px;
+  margin: 1rem auto 0 auto;
+  padding: 0.75rem 1rem;
+  background: var(--paper-2);
+  border: 1px solid var(--accent-2);
+  border-left: 4px solid var(--accent-2);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+
+.hashly-post-auth-prompt {
+  max-width: 720px;
+  margin: 1rem auto 0 auto;
+  padding: 0.75rem 1rem;
+  background: var(--paper-2);
+  border: 1px solid var(--accent);
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+
+.hashly-auth-cancelled {
+  max-width: 720px;
+  margin: 1rem auto 0 auto;
+  padding: 0.75rem 1rem;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--muted);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
