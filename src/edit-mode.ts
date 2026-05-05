@@ -30,6 +30,7 @@ import type { Editor } from '@milkdown/core';
 import { _remountAsEditable, _remountAsReadOnly, getViewerMarkdown } from './viewer';
 import { parseSpecUrl } from './router';
 import { submitSave } from './save-flow';
+import { renderSaveSuccess } from './save-result';
 
 // Per-host edit-mode editor registry. Doubles as the idempotency
 // guard: a second call to `enterEditMode` for a host already in edit
@@ -141,13 +142,19 @@ function onSaveClick(host: HTMLElement): void {
 
   pendingSave = (async () => {
     try {
-      await submitSave({
+      const result = await submitSave({
         repo: parsed.repo,
         path: parsed.path,
         ref: parsed.ref,
         content,
         baseSha,
       });
+      // Issue #92 / AC 6.3 — render the success banner with the PR URL
+      // round-tripped from the worker response. Other branches (no-write
+      // / conflict / network / other) get wired in their own slices.
+      if (result.ok) {
+        renderSaveSuccess(host, result.prUrl);
+      }
     } finally {
       pendingSave = null;
     }
