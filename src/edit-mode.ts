@@ -45,10 +45,15 @@ const editModeEditors = new WeakMap<HTMLElement, Editor>();
 // that case (AC 6.4 stale-SHA safe default).
 const editModeBaseShas = new WeakMap<HTMLElement, string>();
 
-// Issue #92 / AC 6.1 — module-local in-flight lock. A second click
-// while the first POST is still pending is dropped (NOT queued) —
-// pattern matches `pendingAttempt` in `attemptEditAction`.
-let pendingSave: Promise<unknown> | null = null;
+// Issue #92 / AC 6.1 — per-host in-flight lock. A second click
+// while the first POST is still pending is dropped (NOT queued).
+// Per-host (not module-global) so independent edit sessions don't
+// share a lock; this also matches the per-host editModeEditors /
+// editModeBaseShas registries above. When the host is removed
+// from the DOM (e.g., a test sets `document.body.innerHTML = ''`),
+// the WeakMap entry becomes GC-eligible and the next host gets a
+// fresh slot.
+const pendingSaves = new WeakMap<HTMLElement, Promise<unknown>>();
 
 const EDIT_TOOLBAR_TESTID = 'edit-toolbar';
 
@@ -123,7 +128,7 @@ export async function enterEditMode(
 // + baseSha anchor and POSTs via `submitSave`. Refuses to save when
 // any of those are missing (defensive floors).
 function onSaveClick(host: HTMLElement): void {
-  if (pendingSave) return;
+  if (pendingSaves.has(host)) return;
   if (!editModeEditors.has(host)) return; // not in edit mode
 
   const baseSha = editModeBaseShas.get(host);
@@ -140,8 +145,25 @@ function onSaveClick(host: HTMLElement): void {
   const content = getViewerMarkdown(host);
   if (content === null) return; // no viewer mounted
 
-  pendingSave = (async () => {
+  // fix-loop iter-1 / fix #7 — in-flight visual state. Query the
+  // button at click time (not closure-captured) so a re-mounted
+  // toolbar doesn't leave us holding a stale node. Restoration
+  // happens in the `finally` so it covers success, structured
+  // failure (no-write / conflict / network / other), AND any
+  // unexpected throw.
+  const saveBtn = document.querySelector<HTMLButtonElement>(
+    `[data-testid="edit-toolbar-save"]`,
+  );
+  const originalText = saveBtn?.textContent ?? 'Save';
+
+  const promise = (async () => {
     try {
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.setAttribute('aria-busy', 'true');
+        saveBtn.textContent = 'Saving…';
+      }
+
       const result = await submitSave({
         repo: parsed.repo,
         path: parsed.path,
@@ -163,9 +185,15 @@ function onSaveClick(host: HTMLElement): void {
         });
       }
     } finally {
-      pendingSave = null;
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.setAttribute('aria-busy', 'false');
+        saveBtn.textContent = originalText;
+      }
+      pendingSaves.delete(host);
     }
   })();
+  pendingSaves.set(host, promise);
 }
 
 export function getEditModeEditor(host: HTMLElement): Editor | null {
