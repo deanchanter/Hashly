@@ -73,3 +73,61 @@ export async function enterEditMode(host: HTMLElement): Promise<void> {
 export function getEditModeEditor(host: HTMLElement): Editor | null {
   return editModeEditors.get(host) ?? null;
 }
+
+// Issue #91 / AC 5.2 — JIT auth pause-and-redirect.
+//
+// Behavior pinned by `src/__tests__/jit-auth.test.ts`:
+//   1. fetch('/api/session-status', { credentials: 'same-origin' })
+//   2a. 200       → await enterEditMode(host); no redirect.
+//   2b. non-2xx   → window.location.assign('/auth/start?return=<encoded current href>'); no flip.
+//   2c. network error → resolve, do NOT throw (defensive floor).
+//   3. Sync-race idempotent — two synchronous calls share ONE fetch
+//      and ONE flip via a module-local pending-promise lock. This
+//      addresses the AC 5.1 heads-up: WeakMap-based idempotency in
+//      enterEditMode breaks against synchronous re-entrancy because
+//      the first call's first await releases control before the
+//      WeakMap.set lands.
+//
+// Module-local pending lock — `null` when no attempt is in-flight,
+// otherwise the in-flight Promise. A second call while the first is
+// pending returns the SAME promise, deduping the fetch. Cleared in
+// the finally so consecutive (non-overlapping) attempts always
+// re-fetch (the session may have been revoked between attempts).
+let pendingAttempt: Promise<void> | null = null;
+
+export async function attemptEditAction(host: HTMLElement): Promise<void> {
+  if (pendingAttempt) return pendingAttempt;
+
+  pendingAttempt = (async () => {
+    try {
+      let response: Response;
+      try {
+        response = await fetch('/api/session-status', {
+          credentials: 'same-origin',
+        });
+      } catch {
+        // Network error (TypeError on offline / DNS down) — defensive
+        // floor: resolve without rejecting so the WebView console
+        // doesn't surface an unhandled rejection. We don't redirect
+        // either: a transient network blip shouldn't bounce the user
+        // through the auth flow.
+        return;
+      }
+      if (response.ok) {
+        await enterEditMode(host);
+        return;
+      }
+      // 401 / 5xx / any non-2xx → treat as unauthed → pause-and-redirect.
+      // Pause = do NOT call enterEditMode so the read-only DOM stays
+      // read-only. The full current href (including `?repo=...&path=
+      // ...&ref=...`) round-trips through encodeURIComponent so the
+      // post-auth callback can land back on the same spec.
+      const returnParam = encodeURIComponent(window.location.href);
+      window.location.assign(`/auth/start?return=${returnParam}`);
+    } finally {
+      pendingAttempt = null;
+    }
+  })();
+
+  return pendingAttempt;
+}

@@ -1,5 +1,10 @@
 // Hashly Worker entrypoint — module-worker default export.
-import { handleAuthCallback, handleAuthLogout, handleAuthStart } from "./auth";
+import {
+  handleAuthCallback,
+  handleAuthLogout,
+  handleAuthStart,
+  handleSessionStatus,
+} from "./auth";
 import type { Env } from "./env";
 import { handleGitHubProxy } from "./proxy";
 
@@ -21,6 +26,10 @@ export default {
 
     if (url.pathname === "/auth/logout" && request.method === "POST") {
       return handleAuthLogout(request, env);
+    }
+
+    if (url.pathname === "/api/session-status" && request.method === "GET") {
+      return handleSessionStatus(request, env);
     }
 
     if (url.pathname.startsWith("/api/github/") && request.method === "POST") {

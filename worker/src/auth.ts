@@ -210,6 +210,41 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
 }
 
 /**
+ * Issue #91 / AC 5.2 — `GET /api/session-status` is the JIT auth gate.
+ *
+ * The frontend hits this before flipping into edit mode and branches on
+ * the status: 200 → enter edit mode, 401 → redirect to `/auth/start`.
+ * Cookie is HttpOnly so JS can't read it directly; the worker is the
+ * only authority on whether a live session exists.
+ *
+ * Pinned invariants:
+ *   - empty / missing / unrecognized cookie → 401 (no session)
+ *   - cookie maps to a live KV record → 200 with a JSON body
+ *   - access token NEVER appears in the response body or any header
+ *     (AC 3.10 token-leak invariant carried into this surface)
+ *
+ * AC 5.4 will enrich the 200 body with `{user: {login, avatar_url}}`
+ * for the avatar indicator. For AC 5.2 the minimal viable JSON shape
+ * is `{ok: true}` — JSON-parseable so the future enrichment stays
+ * additive.
+ */
+export async function handleSessionStatus(request: Request, env: Env): Promise<Response> {
+  const cookies = parseCookieHeader(request.headers.get("Cookie"));
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+  if (!sessionId) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  const record = await env.SESSIONS.get(sessionId);
+  if (!record) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/**
  * AC 3.7 — `POST /auth/logout` invalidates the session.
  *
  * Deletes the KV record (if any) AND clears the cookie. Idempotent: callers
