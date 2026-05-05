@@ -17,9 +17,8 @@ Run from the repo root:
 - `npm install` — one-time install of the JS toolkit (Vite, TypeScript, Milkdown, etc.). Required before the first `npm run dev`.
 - `npm run dev` — Vite dev server at <http://localhost:1420>. Loads `index.html` → `src/main.ts`. URL params drive the viewer (`?repo=...&path=...&ref=...`).
 - `npm run build` — Vite production build (output: `dist/`).
-- `npm test` — runs the Vitest + jsdom frontend suite (`tsc --noEmit && vitest run`). Tests live in `src/__tests__/`. `vitest.setup.ts` opts existing v0.2 tests into Tauri mode by default; web-mode tests opt out per-test.
-- `cd worker && npm test` — runs the Worker test suite (Vitest + `@cloudflare/vitest-pool-workers` against real `workerd`). Tests in `worker/test/`.
-- `cd worker && npx wrangler deploy` — deploys the Worker (requires Cloudflare account + secrets per #98 external-actions checklist).
+- `npm test` — runs the full Vitest suite. Frontend tests (jsdom) live in `src/__tests__/`; backend tests (Pages Functions on real `workerd` via `@cloudflare/vitest-pool-workers`) will live alongside `functions/` once #136-#138 land. `vitest.setup.ts` opts existing v0.2 tests into Tauri mode by default; web-mode tests opt out per-test.
+- `git push` — Cloudflare Pages auto-deploys from the connected branch; `functions/` ship in the same deploy as the static frontend (no separate worker deploy step).
 
 The legacy `cargo tauri dev` / `cargo tauri build` commands no longer build a runnable app (workspace has no active members; the `src-tauri/` crate's CI cargo job has been removed). They're preserved on disk for rollback only.
 
