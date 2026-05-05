@@ -150,6 +150,48 @@ async function exchangeInstallationToken(
   return (await res.json()) as InstallTokenResponse;
 }
 
+interface InstallationUserInfo {
+  login: string;
+  avatar_url: string;
+}
+
+/**
+ * Issue #91 / AC 5.4 — Resolve the installation owner (user/org) so the
+ * frontend can render an avatar in the persistent header. In `app` mode
+ * the worker holds an installation token, not a user OAuth token, so we
+ * read the installation owner via `GET /app/installations/{id}` with
+ * the App JWT. Failures surface as `null` (graceful degradation — the
+ * session is still valid; the avatar just won't render).
+ */
+async function fetchInstallationUser(
+  installationId: string,
+  appJwt: string,
+): Promise<InstallationUserInfo | null> {
+  try {
+    const res = await fetch(
+      `https://api.github.com/app/installations/${installationId}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${appJwt}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "hashly-worker",
+        },
+      },
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      account?: { login?: unknown; avatar_url?: unknown };
+    };
+    const login = json.account?.login;
+    const avatar_url = json.account?.avatar_url;
+    if (typeof login !== "string" || typeof avatar_url !== "string") return null;
+    return { login, avatar_url };
+  } catch {
+    return null;
+  }
+}
+
 export async function handleAuthStart(request: Request, env: Env): Promise<Response> {
   const state = mintNonce();
   let location: string;
@@ -230,17 +272,31 @@ export async function handleAuthCallback(request: Request, env: Env): Promise<Re
   const appJwt = await makeAppJwt(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
   const tokenResponse = await exchangeInstallationToken(installationId, appJwt);
 
+  // Issue #91 / AC 5.4 — Enrich the KV record with the installation
+  // owner's login + avatar so /api/session-status can surface user
+  // identity to the frontend (avatar in the persistent header).
+  // Failure surfaces as `null` and the record is still written without
+  // user info — the session stays valid, just without the avatar.
+  const userInfo = await fetchInstallationUser(installationId, appJwt);
+
   // Mint an opaque session ID and store the token server-side.
   const sessionId = mintNonce();
-  await env.SESSIONS.put(
-    sessionId,
-    JSON.stringify({
-      access_token: tokenResponse.token,
-      installation_id: installationId,
-      expires_at: tokenResponse.expires_at,
-    }),
-    { expirationTtl: SESSION_COOKIE_MAX_AGE_SECONDS },
-  );
+  const record: {
+    access_token: string;
+    installation_id: string;
+    expires_at: string;
+    user?: InstallationUserInfo;
+  } = {
+    access_token: tokenResponse.token,
+    installation_id: installationId,
+    expires_at: tokenResponse.expires_at,
+  };
+  if (userInfo !== null) {
+    record.user = userInfo;
+  }
+  await env.SESSIONS.put(sessionId, JSON.stringify(record), {
+    expirationTtl: SESSION_COOKIE_MAX_AGE_SECONDS,
+  });
 
   const sessionCookie =
     `${SESSION_COOKIE_NAME}=${sessionId}` +
@@ -315,7 +371,28 @@ export async function handleSessionStatus(request: Request, env: Env): Promise<R
   if (!record) {
     return new Response("unauthorized", { status: 401 });
   }
-  return new Response(JSON.stringify({ ok: true }), {
+  // Issue #91 / AC 5.4 — Surface user info (login + avatar_url) when
+  // the KV record carries it. The 200 body is exclusively user-facing
+  // identity data; the access token never enters this path.
+  const body: { ok: true; user?: InstallationUserInfo } = { ok: true };
+  try {
+    const parsed = JSON.parse(record) as {
+      user?: { login?: unknown; avatar_url?: unknown };
+    };
+    if (
+      parsed.user &&
+      typeof parsed.user.login === "string" &&
+      typeof parsed.user.avatar_url === "string"
+    ) {
+      body.user = {
+        login: parsed.user.login,
+        avatar_url: parsed.user.avatar_url,
+      };
+    }
+  } catch {
+    // Malformed KV record — fall through with `{ok: true}` only.
+  }
+  return new Response(JSON.stringify(body), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });

@@ -27,7 +27,7 @@
 // shape as v0.2 desktop's `getCurrentEditor()`.
 
 import type { Editor } from '@milkdown/core';
-import { _remountAsEditable } from './viewer';
+import { _remountAsEditable, _remountAsReadOnly } from './viewer';
 
 // Per-host edit-mode editor registry. Doubles as the idempotency
 // guard: a second call to `enterEditMode` for a host already in edit
@@ -78,6 +78,28 @@ export async function enterEditMode(host: HTMLElement): Promise<void> {
 
 export function getEditModeEditor(host: HTMLElement): Editor | null {
   return editModeEditors.get(host) ?? null;
+}
+
+// Issue #91 / AC 5.4 — sign-out reverse mechanism. AC 5.1 was
+// explicitly one-way (no exitEditMode in the web JIT flow); AC 5.4's
+// sign-out introduces the reverse so a signing-out user doesn't get
+// stranded in edit mode without a session.
+//
+// Mirrors enterEditMode's destroy + remount pattern via the symmetric
+// `_remountAsReadOnly` viewer helper, so the captured frontmatter
+// survives byte-equal (AC 5.6 cross-pin). Removes the WeakMap entry
+// so a subsequent enterEditMode reactivates cleanly. Removes the
+// edit-toolbar from the DOM. Safe no-op when no edit-mode editor is
+// mounted (defensive floor: a stray sign-out from anonymous state must
+// not throw).
+export async function exitEditMode(host: HTMLElement): Promise<void> {
+  if (!editModeEditors.has(host)) return;
+  await _remountAsReadOnly(host);
+  editModeEditors.delete(host);
+  const toolbar = document.querySelector(
+    `[data-testid="${EDIT_TOOLBAR_TESTID}"]`,
+  );
+  if (toolbar?.parentElement) toolbar.parentElement.removeChild(toolbar);
 }
 
 // Issue #91 / AC 5.2 — JIT auth pause-and-redirect.

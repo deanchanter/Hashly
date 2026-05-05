@@ -215,6 +215,75 @@ export async function _remountAsEditable(
   return editor;
 }
 
+// Issue #91 / AC 5.4 — Read-only remount seam. Symmetric to
+// `_remountAsEditable`: tears down the editable editor and remounts as
+// read-only on the same host with the live serialized body, preserving
+// the captured frontmatter byte-equal. Used by `exitEditMode` (the
+// reverse of AC 5.1's enterEditMode) so the sign-out flow can revert
+// to anonymous viewer state without re-fetching the spec.
+//
+// Returns the new Editor on success, or `null` when no viewer is
+// mounted in `host` (defensive floor — exitEditMode is a no-op when
+// nothing's there to revert).
+export async function _remountAsReadOnly(
+  host: HTMLElement,
+): Promise<Editor | null> {
+  const entry = mountedViewers.get(host);
+  if (!entry) return null;
+
+  const body = entry.editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    const serializer = ctx.get(serializerCtx);
+    return serializer(view.state.doc);
+  });
+
+  try {
+    await entry.editor.destroy();
+  } catch {
+    /* swallow — see _remountAsEditable for rationale */
+  }
+  host.replaceChildren();
+
+  const editor = await Editor.make()
+    .config((ctx) => {
+      ctx.set(rootCtx, host);
+      ctx.set(defaultValueCtx, body);
+      ctx.update(editorViewOptionsCtx, (prev) => ({
+        ...prev,
+        editable: () => false,
+        attributes: {
+          'aria-readonly': 'true',
+          'role': 'textbox',
+          'tabindex': '0',
+          'contenteditable': 'false',
+        },
+      }));
+      const seenHeadingIds = new Map<string, number>();
+      const nodeIdCache = new WeakMap<object, string>();
+      ctx.set(headingIdGenerator.key, (node) => {
+        const cached = nodeIdCache.get(node);
+        if (cached) return cached;
+        if (node.attrs?.id) {
+          nodeIdCache.set(node, node.attrs.id);
+          return node.attrs.id;
+        }
+        const base = node.textContent.toLowerCase().trim().replace(/\s+/g, '-');
+        const count = seenHeadingIds.get(base) ?? 0;
+        seenHeadingIds.set(base, count + 1);
+        const id = count === 0 ? base : `${base}-${count}`;
+        nodeIdCache.set(node, id);
+        return id;
+      });
+    })
+    .use(commonmark)
+    .use(gfm)
+    .create();
+  sanitizeUrlAttributes(host);
+  installBrokenImageFallback(host);
+  mountedViewers.set(host, { editor, frontmatter: entry.frontmatter });
+  return editor;
+}
+
 // Critical fix #1 — XSS scheme rejection. Milkdown's commonmark + gfm
 // presets pass URI schemes through verbatim, so a public-repo markdown
 // file can embed `[click](javascript:...)` / `![x](data:...)` and the

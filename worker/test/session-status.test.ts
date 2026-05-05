@@ -106,6 +106,74 @@ describe("GET /api/session-status — happy path (Issue #91 / AC 5.2)", () => {
   });
 });
 
+describe("GET /api/session-status — user info enrichment (Issue #91 / AC 5.4)", () => {
+  // AC 5.4 enriches the 200 body with `{user: {login, avatar_url}}` so the
+  // frontend can render the signed-in user's GitHub avatar in the persistent
+  // header. The 401 path is unchanged. This describe block re-seeds the
+  // session with user info; the outer beforeEach already seeded a record
+  // without user info, and the inner re-seed replaces that for these tests.
+  const TEST_LOGIN = "octocat";
+  const TEST_AVATAR_URL = "https://avatars.githubusercontent.com/u/583231?v=4";
+
+  beforeEach(async () => {
+    await env.SESSIONS.put(
+      SESSION_ID,
+      JSON.stringify({
+        access_token: ACCESS_TOKEN,
+        installation_id: "42",
+        expires_at: "2030-01-01T00:00:00Z",
+        user: {
+          login: TEST_LOGIN,
+          avatar_url: TEST_AVATAR_URL,
+        },
+      }),
+    );
+  });
+
+  it("200 response body contains `user.login` from the KV record", async () => {
+    const res = await statusCheck({ cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}` });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { user?: { login?: unknown } };
+    expect(
+      body.user?.login,
+      `expected the 200 response body to include user.login (AC 5.4 — frontend renders the signed-in user's identifier in the header). Got body: ${JSON.stringify(body)}`,
+    ).toBe(TEST_LOGIN);
+  });
+
+  it("200 response body contains `user.avatar_url` from the KV record", async () => {
+    const res = await statusCheck({ cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}` });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { user?: { avatar_url?: unknown } };
+    expect(
+      body.user?.avatar_url,
+      `expected the 200 response body to include user.avatar_url (AC 5.4 — frontend renders the user's GitHub avatar from this URL). Got body: ${JSON.stringify(body)}`,
+    ).toBe(TEST_AVATAR_URL);
+  });
+
+  it("401 path stays unchanged (no user info leak via 401 response)", async () => {
+    // Defensive symmetry: the user info is exclusively a property of
+    // the authenticated 200 path. A 401 response must NOT include any
+    // user info regardless of what's in KV (the cookie isn't valid;
+    // there's no authenticated user to identify).
+    const res = await statusCheck({ cookie: `${SESSION_COOKIE_NAME}=bogus-id` });
+    expect(res.status).toBe(401);
+    const body = await res.text();
+    expect(
+      body.includes(TEST_LOGIN),
+      `expected the 401 response body to NOT contain the user login (AC 5.4 + AC 3.10 — no user info leak on the unauthenticated path). Got: ${JSON.stringify(body)}`,
+    ).toBe(false);
+  });
+
+  it("access token still does NOT leak in the user-info-enriched response", async () => {
+    // AC 3.10 carry-over: enriching with user info must NOT relax the
+    // token-leak invariant. The body now has more fields; the token
+    // still must not appear among them.
+    const res = await statusCheck({ cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}` });
+    const body = await res.text();
+    expect(body).not.toContain(ACCESS_TOKEN);
+  });
+});
+
 describe("GET /api/session-status — method discipline", () => {
   it("POST /api/session-status does NOT proxy as if it were /api/github/* (must not 401-bypass)", async () => {
     // The existing GitHub-proxy route is `POST /api/github/*` and
