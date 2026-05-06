@@ -60,6 +60,6 @@
 
 ## 8. Ship
 
-- [ ] 8.1 Open a single PR titled `chore: remove Tauri legacy from active codebase` with the proposal motivation in the body. *(User-driven — branch is pushed; user opens the PR.)*
-- [ ] 8.2 Note in the PR body: "Desktop builds from `main` no longer work; use the v0.2.3 git tag for desktop rollback." Link to the tag.
-- [ ] 8.3 After merge, run `/opsx:archive remove-tauri-legacy`.
+- [x] 8.1 Open a single PR titled `chore: remove Tauri legacy from active codebase` with the proposal motivation in the body. *(PR #154.)*
+- [x] 8.2 Note in the PR body: "Desktop builds from `main` no longer work; use the v0.2.3 git tag for desktop rollback." Link to the tag.
+- [x] 8.3 After merge, run `/opsx:archive remove-tauri-legacy`. *(Archived before merge by user request.)*
