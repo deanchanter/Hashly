@@ -1,7 +1,13 @@
-target/
 .DS_Store
-src-tauri/gen/
 node_modules/
+
+# Stale Rust build artifacts from the pre-remove-tauri-legacy era —
+# the `src-tauri/` crate and root `Cargo.toml` are gone, so cargo no
+# longer regenerates these. Listed here so existing local checkouts
+# don't flood git status. Safe to delete with `rm -rf target/ src-tauri/`
+# on any working copy.
+target/
+src-tauri/
 dist/
 
 # Pages Functions build output

@@ -1,7 +1,0 @@
-# v0.3 sunset desktop: src-tauri removed from active workspace.
-# Crate retained on disk per design.md decision 5 (rollback-cheap).
-# Full deletion follows in a post-merge issue once v0.3 is verified
-# working for one week (per #95 AC 9.4).
-[workspace]
-members = []
-resolver = "2"

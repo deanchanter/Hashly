@@ -28,7 +28,7 @@ The viewer works inside an `<iframe>` — useful for tutorials and courses that 
 
 v0.2.3 was the final desktop release. The Tauri-based macOS app is no longer under active development; the [v0.2.3 release page](https://github.com/deanchanter/Hashly/releases/tag/v0.2.3-bundle-signing) has the last `.dmg`. The Homebrew cask at `deanchanter/homebrew-hashly` is pinned to v0.2.3 and won't receive updates.
 
-The `src-tauri/` crate remains in this repo for now (rollback-cheap; a follow-up issue will delete it once v0.3 has shipped green for one week).
+The `src-tauri/` crate has been removed from `main`; desktop builds from current `main` no longer work. Use the [`v0.2.3` git tag](https://github.com/deanchanter/Hashly/releases/tag/v0.2.3) for desktop rollback.
 
 ## Develop
 

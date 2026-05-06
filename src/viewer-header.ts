@@ -3,12 +3,19 @@
 // Renders a static `<repo> <path> <ref>` surface above the editor
 // mount, plus a single safe out-link to the canonical GitHub view of
 // the file. Standalone module — no Tauri imports, no main.ts coupling.
+//
+// remove-tauri-legacy — when an `onEdit` callback is supplied, the
+// header also renders a visible Edit button (the primary entry point
+// into the JIT-auth flow). The button starts disabled; the bootstrap
+// flips it on via `setEditButtonEnabled` after `mountViewer` resolves.
 
 export interface ViewerHeaderInfo {
   repo: string;
   path: string;
   ref: string;
 }
+
+const EDIT_BUTTON_TESTID = 'header-edit-button';
 
 function encodePathSegments(path: string): string {
   return path
@@ -17,9 +24,18 @@ function encodePathSegments(path: string): string {
     .join('/');
 }
 
+export function setEditButtonEnabled(host: HTMLElement, enabled: boolean): void {
+  const button = host.querySelector<HTMLButtonElement>(
+    `[data-testid="${EDIT_BUTTON_TESTID}"]`,
+  );
+  if (!button) return;
+  button.disabled = !enabled;
+}
+
 export function renderViewerHeader(
   host: HTMLElement,
   info: ViewerHeaderInfo,
+  onEdit?: () => void,
 ): void {
   // Hard clear — same contract as renderFileError / renderLanding.
   host.innerHTML = '';
@@ -59,6 +75,20 @@ export function renderViewerHeader(
   link.setAttribute('rel', 'noopener noreferrer');
   link.textContent = 'View on GitHub';
   header.appendChild(link);
+
+  if (onEdit) {
+    const editButton = document.createElement('button');
+    editButton.type = 'button';
+    editButton.setAttribute('data-testid', EDIT_BUTTON_TESTID);
+    editButton.className = 'viewer-header__edit-button';
+    editButton.textContent = 'Edit';
+    editButton.disabled = true;
+    editButton.addEventListener('click', () => {
+      if (editButton.disabled) return;
+      onEdit();
+    });
+    header.appendChild(editButton);
+  }
 
   host.appendChild(header);
 }
