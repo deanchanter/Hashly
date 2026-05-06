@@ -1,0 +1,15 @@
+# Template for `.dev.vars` — copy to `.dev.vars` (gitignored) and fill in.
+# Read by `wrangler pages dev` when running `npm run dev:full` locally.
+# Mirrors the Production env vars set in the Cloudflare Pages dashboard.
+#
+# Note: GitHub App callback URL allowlist must include
+#   http://localhost:8788/auth/callback
+# for the local OAuth round-trip to succeed.
+
+GITHUB_APP_ID=
+GITHUB_APP_SLUG=
+GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----\n"
+GITHUB_OAUTH_CLIENT_ID=
+GITHUB_OAUTH_CLIENT_SECRET=
+SESSION_HMAC_KEY=
+AUTH_METHOD=app

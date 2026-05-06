@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:full": "vite build --watch & wrangler pages dev dist",
     "build": "vite build",
     "preview": "vite preview",
     "test": "tsc --noEmit && vitest run && vitest run --config vitest.pages.config.ts"

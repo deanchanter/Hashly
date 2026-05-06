@@ -8,6 +8,9 @@ dist/
 dist-functions/
 .wrangler/
 
+# Local secrets for `wrangler pages dev`
+.dev.vars
+
 # ship-milestone skill scratch — local-only run log
 specs/**/ship-milestone-scratch.md
 .claude/.ship-milestone.*.scratch.md
