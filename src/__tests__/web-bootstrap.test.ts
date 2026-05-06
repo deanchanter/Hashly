@@ -88,30 +88,6 @@ describe('Issue #90 / Critical fix #3 — bootstrap web-mode wiring', () => {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });
 
-  it('Tauri regression: when `__TAURI_INTERNALS__` is defined, the v0.2 `mountEditor(showcase)` path runs and the web fetch is NOT called', async () => {
-    // The existing v0.2 codepath must keep working unchanged. If
-    // someone swaps the env-detection check, this catches it.
-    (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-    // Even with a query string, Tauri mode ignores it and mounts
-    // the showcase. Pin that explicitly.
-    window.history.replaceState({}, '', '/?repo=should/be-ignored&path=README.md');
-
-    const { bootstrap } = await import('../main');
-    bootstrap();
-    await settle();
-
-    expect(
-      fetchSpy,
-      'expected NO fetch call in Tauri mode (the desktop path serves local files via IPC, not the GitHub raw endpoint).',
-    ).not.toHaveBeenCalled();
-
-    const editorHost = document.getElementById('editor');
-    expect(
-      editorHost?.querySelector('.ProseMirror'),
-      'expected a .ProseMirror node inside #editor in Tauri mode (mountEditor mounts the showcase fixture).',
-    ).not.toBeNull();
-  });
-
   it('Web cold landing: bare URL `/` → renderLanding is called (no [role="alert"], no fetch)', async () => {
     // No query params → parseSpecUrl errors → renderLanding(host)
     // with the error string. The current bootstrap unconditionally

@@ -2,9 +2,11 @@ name: Release
 
 # v0.3 sunset desktop: this workflow built `.dmg` artifacts for the Tauri
 # desktop app via `cargo tauri build`. v0.2.3 was the final desktop release;
-# v0.3+ ships only as a web app at https://hashly.pages.dev. Workflow gated
-# to only fire for legacy `v0.2.x` tags so existing release infrastructure
-# is preserved should a hotfix ever be needed.
+# v0.3+ ships only as a web app at https://hashly.pages.dev. The `src-tauri/`
+# crate was removed from `main` in `chore/remove-tauri-legacy` — this workflow
+# only builds successfully against the v0.2.3 tag (where the crate still
+# exists) and is gated to `v0.2.*` tags. A hotfix release would need to be
+# cut from a branch rooted at the v0.2.3 commit.
 #
 # A v0.3.x tag will not trigger this workflow. The web app is deployed by
 # Cloudflare Pages from main; no release tag is required.
