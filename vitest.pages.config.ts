@@ -31,6 +31,7 @@ export default defineConfig({
           GITHUB_OAUTH_CLIENT_SECRET: "test-oauth-client-secret",
           SESSION_HMAC_KEY: "test-hmac-key-do-not-use-in-prod-do-not-use-in-prod",
           AUTH_METHOD: "app",
+          ALLOWED_ORIGINS: "https://x.test,https://worker.test",
         },
         serviceBindings: {
           ASSETS: await buildPagesASSETSBinding(path.join(__dirname, "dist")),

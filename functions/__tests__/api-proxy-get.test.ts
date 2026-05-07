@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 
 async function getRepo(opts: { cookie?: string } = {}): Promise<Response> {
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = { Origin: "https://worker.test" };
   if (opts.cookie !== undefined) headers["Cookie"] = opts.cookie;
   return (exports as any).default.fetch("https://worker.test/api/github/repos/octocat/hello-world", {
     method: "GET",

@@ -53,7 +53,7 @@ async function proxy(opts: {
   body?: string;
   contentType?: string;
 } = {}): Promise<Response> {
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = { Origin: "https://worker.test" };
   if (opts.cookie !== undefined) headers["Cookie"] = opts.cookie;
   if (opts.contentType) headers["content-type"] = opts.contentType;
   return (exports as any).default.fetch(`https://worker.test${PROXY_PATH}`, {

@@ -34,7 +34,7 @@ beforeEach(async () => {
 });
 
 async function logout(opts: { cookie?: string; method?: string } = {}): Promise<Response> {
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = { Origin: "https://worker.test" };
   if (opts.cookie !== undefined) headers["Cookie"] = opts.cookie;
   return (exports as any).default.fetch("https://worker.test/auth/logout", {
     method: opts.method ?? "POST",
@@ -97,7 +97,7 @@ describe("POST /auth/logout — happy path (AC 3.7)", () => {
       "https://worker.test/api/github/repos/octocat/hello/issues",
       {
         method: "POST",
-        headers: { Cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}` },
+        headers: { Cookie: `${SESSION_COOKIE_NAME}=${SESSION_ID}`, Origin: "https://worker.test" },
         body: "{}",
       },
     );

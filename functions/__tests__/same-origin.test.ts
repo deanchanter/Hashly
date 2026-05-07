@@ -98,7 +98,7 @@ describe("Test 6.1 — /auth/start is reachable as a same-origin path", () => {
     // (the request-side of the same-origin contract).
     const res = await (exports as any).default.fetch(
       `${TEST_ORIGIN}/auth/start`,
-      { redirect: "manual" },
+      { redirect: "manual", headers: { Origin: TEST_ORIGIN } },
     );
     expect(
       res.status,
@@ -128,7 +128,7 @@ describe("Test 6.1 — /auth/start is reachable as a same-origin path", () => {
     // we want. Pin: no explicit Domain attribute leaks through.
     const res = await (exports as any).default.fetch(
       `${TEST_ORIGIN}/auth/start`,
-      { redirect: "manual" },
+      { redirect: "manual", headers: { Origin: TEST_ORIGIN } },
     );
     const setCookie = findSetCookie(res, STATE_COOKIE_NAME);
     expect(setCookie).toBeDefined();
@@ -149,7 +149,7 @@ describe("Test 6.2 — /api/session-status is a same-origin JSON endpoint (no CO
     // Access-Control-* header appears.
     const res = await (exports as any).default.fetch(
       `${TEST_ORIGIN}/api/session-status`,
-      { headers: { Cookie: "hashly_sid=does-not-exist" } },
+      { headers: { Cookie: "hashly_sid=does-not-exist", Origin: TEST_ORIGIN } },
     );
 
     // The endpoint returns a structured response either way. The
@@ -202,7 +202,7 @@ describe("Test 6.2 — /api/session-status is a same-origin JSON endpoint (no CO
 
     const res = await (exports as any).default.fetch(
       `${TEST_ORIGIN}/api/session-status`,
-      { headers: { Cookie: `hashly_session=${SESSION_ID}` } },
+      { headers: { Cookie: `hashly_session=${SESSION_ID}`, Origin: TEST_ORIGIN } },
     );
     expect(res.status).toBe(200);
 
@@ -238,7 +238,7 @@ describe("Test 6.3 — /auth/callback redirect Location is same-origin", () => {
 
     const startRes = await (exports as any).default.fetch(
       `${TEST_ORIGIN}/auth/start?return=${encodeURIComponent(sameOriginReturn)}`,
-      { redirect: "manual" },
+      { redirect: "manual", headers: { Origin: TEST_ORIGIN } },
     );
     expect(startRes.status).toBe(302);
 
@@ -256,7 +256,7 @@ describe("Test 6.3 — /auth/callback redirect Location is same-origin", () => {
     callbackUrl.searchParams.set("setup_action", "install");
 
     const cbRes = await (exports as any).default.fetch(callbackUrl.toString(), {
-      headers: { Cookie: `${STATE_COOKIE_NAME}=${stateCookieValue}` },
+      headers: { Cookie: `${STATE_COOKIE_NAME}=${stateCookieValue}`, Origin: TEST_ORIGIN },
       redirect: "manual",
     });
 

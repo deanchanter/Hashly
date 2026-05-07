@@ -1,9 +1,12 @@
 import { handleAuthLogout } from "../_shared/auth";
 import type { Env } from "../_shared/env";
+import { enforceOriginAndMethod, resolveAllowedOrigins } from "../_shared/origin-gate";
 
 export const onRequest: PagesFunction<Env> = async (ctx) => {
-  if (ctx.request.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 });
-  }
+  const gate = enforceOriginAndMethod(ctx.request, {
+    allowedMethods: ["POST"],
+    allowedOrigins: resolveAllowedOrigins(ctx.env),
+  });
+  if (gate) return gate;
   return handleAuthLogout(ctx.request, ctx.env);
 };

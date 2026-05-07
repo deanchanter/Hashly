@@ -37,7 +37,7 @@ beforeEach(async () => {
 });
 
 async function statusCheck(opts: { cookie?: string; method?: string } = {}): Promise<Response> {
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = { Origin: "https://worker.test" };
   if (opts.cookie !== undefined) headers["Cookie"] = opts.cookie;
   return (exports as any).default.fetch("https://worker.test/api/session-status", {
     method: opts.method ?? "GET",

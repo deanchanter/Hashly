@@ -74,7 +74,7 @@ async function callbackSuccess(): Promise<Response> {
   url.searchParams.set("installation_id", TEST_INSTALLATION_ID);
   url.searchParams.set("setup_action", "install");
   return (exports as any).default.fetch(url.toString(), {
-    headers: { Cookie: `${STATE_COOKIE_NAME}=${TEST_STATE}` },
+    headers: { Cookie: `${STATE_COOKIE_NAME}=${TEST_STATE}`, Origin: "https://worker.test" },
     redirect: "manual",
   });
 }

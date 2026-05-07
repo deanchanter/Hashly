@@ -12,4 +12,5 @@ export interface Env {
   GITHUB_OAUTH_CLIENT_SECRET: string;
   SESSION_HMAC_KEY: string;
   AUTH_METHOD: "app" | "oauth-app";
+  ALLOWED_ORIGINS?: string;
 }

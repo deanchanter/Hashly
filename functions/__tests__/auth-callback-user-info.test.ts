@@ -97,7 +97,10 @@ beforeEach(() => {
 
 async function runCallback(): Promise<Response> {
   const startUrl = new URL("https://worker.test/auth/start");
-  const startRes = await (exports as any).default.fetch(startUrl.toString(), { redirect: "manual" });
+  const startRes = await (exports as any).default.fetch(startUrl.toString(), {
+    redirect: "manual",
+    headers: { Origin: "https://worker.test" },
+  });
   expect(startRes.status, "precondition: /auth/start must redirect").toBe(302);
 
   const stateCookie = findSetCookie(startRes, STATE_COOKIE_NAME);
@@ -111,7 +114,7 @@ async function runCallback(): Promise<Response> {
   callbackUrl.searchParams.set("setup_action", "install");
 
   return (exports as any).default.fetch(callbackUrl.toString(), {
-    headers: { Cookie: `${STATE_COOKIE_NAME}=${stateCookieValue}` },
+    headers: { Cookie: `${STATE_COOKIE_NAME}=${stateCookieValue}`, Origin: "https://worker.test" },
     redirect: "manual",
   });
 }
