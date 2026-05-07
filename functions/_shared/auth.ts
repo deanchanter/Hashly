@@ -202,8 +202,14 @@ export async function handleAuthStart(request: Request, env: Env): Promise<Respo
     });
     location = `https://github.com/login/oauth/authorize?${params.toString()}`;
   } else {
-    // Default: `app` (or undefined) — send the user to install the GitHub App.
-    location = `https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new?state=${state}`;
+    // Default: `app` (or undefined) — send a returning user straight through
+    // OAuth using the GitHub App's client_id, so users with the App already
+    // installed don't get bounced through the install screen unnecessarily.
+    const params = new URLSearchParams({
+      client_id: env.GITHUB_APP_CLIENT_ID,
+      state,
+    });
+    location = `https://github.com/login/oauth/authorize?${params.toString()}`;
   }
 
   // Issue #91 / AC 5.3 — Thread the `return` URL through the OAuth round

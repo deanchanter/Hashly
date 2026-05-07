@@ -27,6 +27,7 @@ export default defineConfig({
           GITHUB_APP_ID: "123456",
           GITHUB_APP_SLUG: "hashly-test",
           GITHUB_APP_PRIVATE_KEY: TEST_RSA_PRIVATE_KEY_PEM,
+          GITHUB_APP_CLIENT_ID: "test-github-app-client-id",
           GITHUB_OAUTH_CLIENT_ID: "test-oauth-client-id",
           GITHUB_OAUTH_CLIENT_SECRET: "test-oauth-client-secret",
           SESSION_HMAC_KEY: "test-hmac-key-do-not-use-in-prod-do-not-use-in-prod",

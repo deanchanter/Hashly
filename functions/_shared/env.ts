@@ -8,6 +8,7 @@ export interface Env {
   GITHUB_APP_ID: string;
   GITHUB_APP_SLUG: string;
   GITHUB_APP_PRIVATE_KEY: string;
+  GITHUB_APP_CLIENT_ID: string;
   GITHUB_OAUTH_CLIENT_ID: string;
   GITHUB_OAUTH_CLIENT_SECRET: string;
   SESSION_HMAC_KEY: string;
