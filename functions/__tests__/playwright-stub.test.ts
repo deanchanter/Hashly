@@ -102,9 +102,17 @@ describe("AC 5.6 — Playwright stub guardrail (stub never ships to prod)", () =
       // Sanity branch — confirms the handler isn't unconditionally 404.
       // The full stub behavior (KV write, cookie, return URL) lives in
       // a Playwright-driven e2e test. Here we just pin the gate.
+      //
+      // Hostname must be in the allowlist baked into
+      // `_shared/playwright-gate.ts` — `localhost` / `127.0.0.1` /
+      // `*.localhost`. `worker.test` (the canonical host for other
+      // worker tests) is deliberately NOT allowlisted; using it here
+      // would re-couple this sanity probe to a hostname the gate
+      // rejects. See `playwright-stub-defense-in-depth.test.ts` for
+      // the prod-host rejection coverage.
       const env = makeEnv({ PLAYWRIGHT_AUTH_STUB: "1" });
       const req = new Request(
-        "https://worker.test/__playwright/grant?state=abc&scenario=happy&return=/",
+        "http://localhost:8788/__playwright/grant?state=abc&scenario=happy&return=/",
       );
       const res = await grantOnRequest(makeCtx(req, env));
       expect(res.status).toBeGreaterThanOrEqual(300);
@@ -132,11 +140,14 @@ describe("AC 5.6 — Playwright stub guardrail (stub never ships to prod)", () =
     });
 
     it('redirects to /__playwright/grant when env.PLAYWRIGHT_AUTH_STUB === "1"', async () => {
-      // Sanity: with the flag on, the redirect target swings to the
-      // local stub. The scenario query param threads through so
-      // `/__playwright/grant` knows which fixture session to mint.
+      // Sanity: with the flag on AND a hostname in the allowlist,
+      // the redirect target swings to the local stub. The scenario
+      // query param threads through so `/__playwright/grant` knows
+      // which fixture session to mint. Hostname-allowlist rejection
+      // (prod hosts must NOT redirect here even with flag=1) is
+      // covered in `playwright-stub-defense-in-depth.test.ts`.
       const env = makeEnv({ PLAYWRIGHT_AUTH_STUB: "1" });
-      const req = new Request("https://worker.test/auth/start?scenario=no-write");
+      const req = new Request("http://localhost:8788/auth/start?scenario=no-write");
       const res = await handleAuthStart(req, env);
       expect(res.status).toBe(302);
       const loc = new URL(res.headers.get("Location") ?? "", "https://worker.test");
