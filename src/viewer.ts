@@ -328,20 +328,25 @@ export async function _remountAsReadOnly(
 // as inert text) so the surrounding prose is unaffected.
 const SAFE_URL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
+// Strip-set: zero-width chars (ZWSP/ZWNJ/ZWJ/BOM) the WHATWG URL
+// parser ignores when resolving a scheme, plus ASCII tab/LF/CR/NUL
+// which the URL parser strips before scheme parsing. Either category
+// can be smuggled raw or percent-encoded so we apply the strip both
+// before and after a single percent-decode.
+const URL_NORMALIZE_STRIP_RE = /[\t\n\r\0​‌‍﻿]/g;
+
 function normalizeUrlForSchemeMatch(value: string): string {
-  // Strip zero-width chars (ZWSP, ZWNJ, ZWJ, BOM) that browsers ignore
-  // when resolving the scheme but a naive regex would not.
-  const stripped = value.replace(/[​‌‍﻿]/g, '');
+  const preDecode = value.replace(URL_NORMALIZE_STRIP_RE, '');
   // Percent-decode once. Malformed sequences (e.g. lone `%`) throw —
   // treat as suspicious by returning the stripped form so scheme match
   // falls through to the disallowed branch if it was a scheme attempt.
   let decoded: string;
   try {
-    decoded = decodeURIComponent(stripped);
+    decoded = decodeURIComponent(preDecode);
   } catch {
-    decoded = stripped;
+    decoded = preDecode;
   }
-  return decoded.trim().toLowerCase();
+  return decoded.replace(URL_NORMALIZE_STRIP_RE, '').trim().toLowerCase();
 }
 
 function isSafeUrl(value: string): boolean {
