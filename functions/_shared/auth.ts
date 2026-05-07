@@ -195,7 +195,20 @@ async function fetchInstallationUser(
 export async function handleAuthStart(request: Request, env: Env): Promise<Response> {
   const state = mintNonce();
   let location: string;
-  if (env.AUTH_METHOD === "oauth-app") {
+  // Issue #159 / AC 5.5, 5.6 — Playwright auth-stub bypass. Strict
+  // string-equality gate ensures any non-`"1"` value (including
+  // undefined / "" / "0" / "true") falls through to the real GitHub
+  // flow.
+  if (env.PLAYWRIGHT_AUTH_STUB === "1") {
+    const startUrl = new URL(request.url);
+    const scenario = startUrl.searchParams.get("scenario") ?? "happy";
+    const stubParams = new URLSearchParams({ state, scenario });
+    const rawReturn = startUrl.searchParams.get("return");
+    if (rawReturn !== null) {
+      stubParams.set("return", rawReturn);
+    }
+    location = `/__playwright/grant?${stubParams.toString()}`;
+  } else if (env.AUTH_METHOD === "oauth-app") {
     const params = new URLSearchParams({
       client_id: env.GITHUB_OAUTH_CLIENT_ID,
       state,
