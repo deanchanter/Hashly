@@ -31,8 +31,30 @@ import { installBrokenImageFallback } from './broken-image-fallback';
 // so multiple mounts in the same DOM stay independent.
 const mountedViewers = new WeakMap<
   HTMLElement,
-  { editor: Editor; frontmatter: string | null }
+  {
+    editor: Editor;
+    frontmatter: string | null;
+    sanitizerObserver?: MutationObserver | null;
+  }
 >();
+
+// Issue #157 / AC 3.3 — install a MutationObserver on the read-only
+// viewer host so post-mount DOM mutations (decorations, late-arriving
+// nodes, attribute rewrites) re-run `sanitizeUrlAttributes`. Returns
+// the observer so callers can stash it on the per-host entry and
+// disconnect it before remount.
+function installSanitizerObserver(host: HTMLElement): MutationObserver {
+  const observer = new MutationObserver(() => {
+    sanitizeUrlAttributes(host);
+  });
+  observer.observe(host, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['href', 'src'],
+  });
+  return observer;
+}
 
 // Issue #91 / AC 5.6 — Capture the frontmatter-shaped prefix even when
 // the YAML inside is malformed. `parseFrontmatter` returns
@@ -114,7 +136,8 @@ export async function mountViewer(
     .create();
   sanitizeUrlAttributes(host);
   installBrokenImageFallback(host);
-  mountedViewers.set(host, { editor, frontmatter });
+  const sanitizerObserver = installSanitizerObserver(host);
+  mountedViewers.set(host, { editor, frontmatter, sanitizerObserver });
   return editor;
 }
 
@@ -155,6 +178,7 @@ export async function _remountAsEditable(
 ): Promise<Editor | null> {
   const entry = mountedViewers.get(host);
   if (!entry) return null;
+  entry.sanitizerObserver?.disconnect();
 
   const body = entry.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
@@ -211,7 +235,11 @@ export async function _remountAsEditable(
   installBrokenImageFallback(host);
   // Preserve the captured frontmatter byte-equal across the flip
   // (AC 5.6 cross-pin).
-  mountedViewers.set(host, { editor, frontmatter: entry.frontmatter });
+  mountedViewers.set(host, {
+    editor,
+    frontmatter: entry.frontmatter,
+    sanitizerObserver: null,
+  });
   return editor;
 }
 
@@ -230,6 +258,7 @@ export async function _remountAsReadOnly(
 ): Promise<Editor | null> {
   const entry = mountedViewers.get(host);
   if (!entry) return null;
+  entry.sanitizerObserver?.disconnect();
 
   const body = entry.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
@@ -280,7 +309,12 @@ export async function _remountAsReadOnly(
     .create();
   sanitizeUrlAttributes(host);
   installBrokenImageFallback(host);
-  mountedViewers.set(host, { editor, frontmatter: entry.frontmatter });
+  const sanitizerObserver = installSanitizerObserver(host);
+  mountedViewers.set(host, {
+    editor,
+    frontmatter: entry.frontmatter,
+    sanitizerObserver,
+  });
   return editor;
 }
 
