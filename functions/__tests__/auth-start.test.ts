@@ -32,16 +32,33 @@ describe("GET /auth/start (AUTH_METHOD=app, the default)", () => {
     expect(res.status).toBe(302);
   });
 
-  it("Location points to a GitHub App installation URL", async () => {
+  it("Location points to GitHub's OAuth authorize endpoint (issue #155 — fixes #153)", async () => {
     const res = await startAuth();
     const loc = res.headers.get("Location") ?? "";
-    // Per team-lead: in `app` mode, /auth/start sends the user to
-    // github.com/apps/<slug>/installations/new so they can install the App
-    // on a specific repo. The slug is taken from env.GITHUB_APP_SLUG
-    // (vitest config injects `hashly-test`).
-    expect(loc).toMatch(
-      /^https:\/\/github\.com\/apps\/hashly-test\/installations\/new(\?|$)/,
-    );
+    // Issue #155 / #153 — `app` mode no longer sends the user to
+    // /apps/<slug>/installations/new (which requires admin perms and
+    // lands the user in a config screen). Instead we use GitHub's
+    // standard user-to-server OAuth handshake at
+    // /login/oauth/authorize. The App identifies itself with its
+    // OAuth-style client_id (env.GITHUB_APP_CLIENT_ID — distinct from
+    // GITHUB_APP_ID and from the legacy OAuth-app client id).
+    const url = new URL(loc);
+    expect(url.host).toBe("github.com");
+    expect(url.pathname).toBe("/login/oauth/authorize");
+  });
+
+  it("Location includes a non-empty client_id from env.GITHUB_APP_CLIENT_ID (AC 1.2)", async () => {
+    const res = await startAuth();
+    const url = new URL(res.headers.get("Location") ?? "");
+    const clientId = url.searchParams.get("client_id");
+    expect(clientId).not.toBeNull();
+    expect(clientId!.length).toBeGreaterThan(0);
+    // vitest config injects "test-github-app-client-id" for AUTH_METHOD=app.
+    expect(clientId).toBe("test-github-app-client-id");
+    // Defense: must not accidentally use the OAuth-App client id
+    // (those env vars are different secrets and live in different
+    // GitHub registrations).
+    expect(clientId).not.toBe("test-oauth-client-id");
   });
 
   it("Location includes a `state` query parameter", async () => {

@@ -1,8 +1,13 @@
 // AC 3.8 — `AUTH_METHOD` env-var flag selects between the GitHub App
 // install flow and the OAuth App user-to-server flow on `/auth/start`.
 //
-// Default: `app` → `https://github.com/apps/<slug>/installations/new`
-// Override: `oauth-app` → `https://github.com/login/oauth/authorize?client_id=<oauth-client-id>`
+// Default: `app` → `https://github.com/login/oauth/authorize?client_id=<GITHUB_APP_CLIENT_ID>`
+// Override: `oauth-app` → `https://github.com/login/oauth/authorize?client_id=<GITHUB_OAUTH_CLIENT_ID>`
+//
+// Issue #155 / #153 — both branches now use the same authorize endpoint;
+// they differ only by which `client_id` env var is read. Previously the
+// `app` branch sent users to /apps/<slug>/installations/new, which broke
+// the JIT-auth flow for non-admin users.
 //
 // AC 3.10 lists "OAuth-App fallback flag honored" as one of the five
 // required Worker unit tests; this file is where that lives.
@@ -57,11 +62,15 @@ describe("/auth/start — AUTH_METHOD=oauth-app branch (AC 3.8 + AC 3.10 fallbac
     expect(loc).not.toContain("/installations/new");
   });
 
-  it("Location includes client_id from env.GITHUB_OAUTH_CLIENT_ID", async () => {
+  it("Location includes client_id from env.GITHUB_OAUTH_CLIENT_ID (AC 1.4 regression — NOT the App client id)", async () => {
     const res = await startAuthWith({ AUTH_METHOD: "oauth-app" });
     const url = new URL(res.headers.get("Location") ?? "");
     // vitest config injects "test-oauth-client-id".
     expect(url.searchParams.get("client_id")).toBe("test-oauth-client-id");
+    // Issue #155 — must read the OAuth-App client id, NOT the new
+    // GITHUB_APP_CLIENT_ID (which is a separate secret for the App's
+    // own OAuth-style handshake under AUTH_METHOD=app).
+    expect(url.searchParams.get("client_id")).not.toBe("test-github-app-client-id");
   });
 
   it("Location still includes a state query param with the same entropy floor", async () => {
@@ -98,43 +107,55 @@ describe("/auth/start — AUTH_METHOD=oauth-app branch (AC 3.8 + AC 3.10 fallbac
   });
 });
 
-describe("/auth/start — default branch (AC 3.8 default = `app`)", () => {
-  it("AUTH_METHOD=app → Location is the GitHub App install URL", async () => {
-    // Sanity that the explicit `app` value behaves like (exports as any).default.fetch did in
-    // slice 2 (AC 3.4). This is mostly a regression lock against the
-    // possibility of breaking the default while shipping the oauth flag.
+describe("/auth/start — default branch (AC 3.8 default = `app`, post-#155)", () => {
+  it("AUTH_METHOD=app → Location is the OAuth authorize URL with GITHUB_APP_CLIENT_ID (AC 1.2/1.3)", async () => {
+    // Issue #155 / #153 — `app` mode now uses GitHub's standard
+    // /login/oauth/authorize endpoint (user-to-server), identifying
+    // the App via env.GITHUB_APP_CLIENT_ID. The legacy
+    // /apps/<slug>/installations/new redirect is gone (it broke
+    // non-admin JIT-auth users).
     const res = await startAuthWith({ AUTH_METHOD: "app" });
     expect(res.status).toBe(302);
+    const url = new URL(res.headers.get("Location") ?? "");
+    expect(url.host).toBe("github.com");
+    expect(url.pathname).toBe("/login/oauth/authorize");
+    expect(url.searchParams.get("client_id")).toBe("test-github-app-client-id");
+    const state = url.searchParams.get("state");
+    expect(state).not.toBeNull();
+    expect(state!.length).toBeGreaterThanOrEqual(32);
+    // Negative: the legacy install URL must not appear.
     const loc = res.headers.get("Location") ?? "";
-    expect(loc).toMatch(
-      /^https:\/\/github\.com\/apps\/hashly-test\/installations\/new(\?|$)/,
-    );
+    expect(loc).not.toContain("/installations/new");
+    expect(loc).not.toContain("/apps/");
   });
 
-  it("AUTH_METHOD undefined → defaults to `app` behavior", async () => {
+  it("AUTH_METHOD undefined → defaults to `app` behavior (authorize URL, AC 1.2)", async () => {
     // Mimic a deployment that has not yet set the env var. The worker
     // should not 500 or pick an unknown branch — it must default to
-    // the install URL per AC 3.8 ("default `app`").
+    // the new authorize URL per AC 1.2.
     const overriddenEnv: Record<string, unknown> = { ...env };
     delete overriddenEnv.AUTH_METHOD;
     const req = new Request("https://worker.test/auth/start");
     const res = await worker.fetch(req as never, overriddenEnv as never, undefined);
 
     expect((res as Response).status).toBe(302);
-    const loc = (res as Response).headers.get("Location") ?? "";
-    expect(loc).toMatch(
-      /^https:\/\/github\.com\/apps\/hashly-test\/installations\/new(\?|$)/,
-    );
+    const url = new URL((res as Response).headers.get("Location") ?? "");
+    expect(url.host).toBe("github.com");
+    expect(url.pathname).toBe("/login/oauth/authorize");
+    expect(url.searchParams.get("client_id")).toBe("test-github-app-client-id");
   });
 
-  it("AUTH_METHOD=app and AUTH_METHOD=oauth-app produce different Location origins/paths", async () => {
-    // Cross-check that the flag actually does something — guards against
-    // a hypothetical future regression where someone merges the two paths
-    // by accident.
+  it("AUTH_METHOD=app and AUTH_METHOD=oauth-app produce different client_id values (AC 1.2 vs AC 1.4)", async () => {
+    // Post-#155 the two branches share the same /login/oauth/authorize
+    // path, so the cross-check now pins the discriminator: client_id.
+    // Guards against a hypothetical regression where someone merges
+    // the env reads (e.g., always reads GITHUB_OAUTH_CLIENT_ID).
     const appRes = await startAuthWith({ AUTH_METHOD: "app" });
     const oauthRes = await startAuthWith({ AUTH_METHOD: "oauth-app" });
-    const appLoc = appRes.headers.get("Location") ?? "";
-    const oauthLoc = oauthRes.headers.get("Location") ?? "";
-    expect(new URL(appLoc).pathname).not.toBe(new URL(oauthLoc).pathname);
+    const appClient = new URL(appRes.headers.get("Location") ?? "").searchParams.get("client_id");
+    const oauthClient = new URL(oauthRes.headers.get("Location") ?? "").searchParams.get("client_id");
+    expect(appClient).toBe("test-github-app-client-id");
+    expect(oauthClient).toBe("test-oauth-client-id");
+    expect(appClient).not.toBe(oauthClient);
   });
 });
