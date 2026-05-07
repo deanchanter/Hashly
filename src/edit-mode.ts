@@ -36,6 +36,7 @@ import {
   renderSaveError,
   renderSaveSuccess,
 } from './save-result';
+import { showBanner } from './ui/banner';
 
 // Per-host edit-mode editor registry. Doubles as the idempotency
 // guard: a second call to `enterEditMode` for a host already in edit
@@ -380,6 +381,15 @@ export async function attemptEditAction(
         // edge cases. The redirect still proceeds; the user just
         // won't get the auto-restore.
       }
+      // Issue #158 / AC 4.6 — visible "redirecting…" indicator before
+      // the navigation lands. Renders a role="status" banner so SR
+      // users hear the announcement and sighted users get visual
+      // feedback during the brief window between fetch resolution
+      // and the GitHub auth screen painting.
+      showBanner(host, {
+        kind: 'info',
+        message: 'Redirecting to GitHub…',
+      });
       const returnParam = encodeURIComponent(window.location.href);
       window.location.assign(`/auth/start?return=${returnParam}`);
       return undefined;
@@ -464,8 +474,23 @@ function renderViewOnlyLock(host: HTMLElement): void {
   banner.setAttribute('data-testid', VIEW_ONLY_LOCK_TESTID);
   banner.setAttribute('role', 'status');
   banner.className = 'hashly-view-only-lock';
-  banner.textContent =
+  const message = document.createElement('span');
+  message.textContent =
     "View-only — you don't have write access to this repo. Ask the dev to add you.";
+  banner.appendChild(message);
+
+  // Issue #158 / AC 4.7 — "back to read-only view" recovery
+  // affordance. Removes the lock banner so the user can keep reading
+  // the rendered markdown without the banner cluttering the surface.
+  const backBtn = document.createElement('button');
+  backBtn.type = 'button';
+  backBtn.textContent = 'Back to read-only view';
+  backBtn.className = 'hashly-view-only-lock__back';
+  backBtn.addEventListener('click', () => {
+    if (banner.parentNode) banner.parentNode.removeChild(banner);
+  });
+  banner.appendChild(backBtn);
+
   // Issue #91 fix-loop-1 / fix #4 — banner ABOVE the editor body so
   // the user sees it without scrolling past the rendered markdown.
   host.prepend(banner);
