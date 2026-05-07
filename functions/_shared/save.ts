@@ -8,6 +8,7 @@
 
 import { parseCookieHeader } from "./auth";
 import type { Env } from "./env";
+import { isPlaywrightStubAllowed } from "./playwright-gate";
 
 const SESSION_COOKIE_NAME = "hashly_session";
 
@@ -158,6 +159,10 @@ export async function handleSave(request: Request, env: Env): Promise<Response> 
   const sessionId = cookies[SESSION_COOKIE_NAME];
 
   if (!sessionId) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  // Crit 3b — pw__ namespace is reserved for the Playwright stub.
+  if (sessionId.startsWith("pw__") && !isPlaywrightStubAllowed(env, request)) {
     return new Response("unauthorized", { status: 401 });
   }
 
