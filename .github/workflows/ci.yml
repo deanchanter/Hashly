@@ -16,3 +16,55 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm test
+
+  e2e:
+    # Issue #159 — Playwright e2e suite. Runs on a separate job in
+    # parallel with `npm` so a flaky browser test doesn't block the
+    # unit-test signal. PLAYWRIGHT_AUTH_STUB=1 unlocks the local
+    # auth-stub at /__playwright/grant; the prod-default guardrail
+    # (functions/__tests__/playwright-stub.test.ts, AC 5.6) verifies
+    # the stub stays inert without this flag.
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_AUTH_STUB: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Build dist (Vite frontend bundle)
+        run: npm run build
+
+      - name: Vitest (frontend + pages-functions)
+        run: npm test
+
+      - name: Playwright e2e
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
