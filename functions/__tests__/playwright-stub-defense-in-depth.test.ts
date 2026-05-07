@@ -32,6 +32,8 @@
 
 import { describe, it, expect } from "vitest";
 import { handleAuthStart, handleSessionStatus } from "../_shared/auth";
+import { handleGitHubProxy } from "../_shared/proxy";
+import { handleSave } from "../_shared/save";
 import type { Env } from "../_shared/env";
 import { onRequest as grantOnRequest } from "../__playwright/grant";
 
@@ -277,6 +279,153 @@ describe("Crit 3 — session ID namespace prefix (pw__)", () => {
     });
     const res = await handleSessionStatus(req, env);
     expect(res.status).toBe(200);
+  });
+});
+
+describe("Crit 3b — pw__ guard extended to /api/github/* and /api/save", () => {
+  // Security re-review (post-Crit-3 fix-loop): the prefix-refusal
+  // logic landed in `handleSessionStatus` only. `handleGitHubProxy`
+  // and `handleSave` both call `env.SESSIONS.get(sessionId)`
+  // directly with no prefix check, so a leaked `pw__` cookie on a
+  // prod host would still authenticate against the proxy + save
+  // surfaces. Extend the same gate (`isPlaywrightStubAllowed`) to
+  // both. Same shape as auth.ts:391-394.
+
+  function fixtureRecord() {
+    return JSON.stringify({
+      access_token: "stolen-token",
+      installation_id: "0",
+      expires_at: new Date(Date.now() + 3600_000).toISOString(),
+    });
+  }
+
+  describe("handleGitHubProxy", () => {
+    it("rejects pw__-prefixed session IDs with 401 when flag is unset (production default)", async () => {
+      const { namespace, store } = makeKV();
+      store.set("pw__forged-proxy-session", fixtureRecord());
+      const env = makeEnv({}, namespace); // flag undefined
+
+      const req = new Request(
+        "https://hashly-md.pages.dev/api/github/repos/x/y",
+        { headers: { Cookie: "hashly_session=pw__forged-proxy-session" } },
+      );
+      const res = await handleGitHubProxy(req, env);
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects pw__-prefixed session IDs even with flag=1 if hostname is prod", async () => {
+      const { namespace, store } = makeKV();
+      store.set("pw__leaked-proxy-session", fixtureRecord());
+      const env = makeEnv({ PLAYWRIGHT_AUTH_STUB: "1" }, namespace);
+
+      const req = new Request(
+        "https://hashly-md.pages.dev/api/github/repos/x/y",
+        { headers: { Cookie: "hashly_session=pw__leaked-proxy-session" } },
+      );
+      const res = await handleGitHubProxy(req, env);
+      expect(res.status).toBe(401);
+    });
+
+    it("continues to accept un-prefixed real session IDs in production (regression)", async () => {
+      // Sanity branch — the prefix-refusal logic must NOT block the
+      // canonical proxy path. We don't fully exercise the upstream
+      // fetch (would hit api.github.com); instead we assert that the
+      // 401 prefix-gate does not fire for an un-prefixed cookie.
+      const { namespace, store } = makeKV();
+      store.set("real-proxy-session", fixtureRecord());
+      const env = makeEnv({}, namespace);
+
+      const req = new Request(
+        "https://hashly-md.pages.dev/api/github/repos/x/y",
+        { headers: { Cookie: "hashly_session=real-proxy-session" } },
+      );
+      // We mock fetch so the test doesn't reach the real network.
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () =>
+        new Response("upstream-ok", { status: 200 });
+      try {
+        const res = await handleGitHubProxy(req, env);
+        // Anything other than 401 (the prefix-gate response) confirms
+        // the session passed the gate. Some envs may pass the request
+        // through to the (mocked) upstream fetch.
+        expect(res.status).not.toBe(401);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("handleSave", () => {
+    function saveRequest(host: string, cookie: string): Request {
+      return new Request(`https://${host}/api/save`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          // /api/save enforces same-origin Origin header BEFORE the
+          // session check — must match the request URL's origin so
+          // the test isolates the prefix-gate, not the origin gate.
+          Origin: `https://${host}`,
+          Cookie: cookie,
+        },
+        body: JSON.stringify({
+          repo: "owner/name",
+          path: "spec.md",
+          ref: "main",
+          content: "x",
+          baseSha: "0".repeat(40),
+        }),
+      });
+    }
+
+    it("rejects pw__-prefixed session IDs with 401 when flag is unset (production default)", async () => {
+      const { namespace, store } = makeKV();
+      store.set("pw__forged-save-session", fixtureRecord());
+      const env = makeEnv({}, namespace);
+
+      const req = saveRequest(
+        "hashly-md.pages.dev",
+        "hashly_session=pw__forged-save-session",
+      );
+      const res = await handleSave(req, env);
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects pw__-prefixed session IDs even with flag=1 if hostname is prod", async () => {
+      const { namespace, store } = makeKV();
+      store.set("pw__leaked-save-session", fixtureRecord());
+      const env = makeEnv({ PLAYWRIGHT_AUTH_STUB: "1" }, namespace);
+
+      const req = saveRequest(
+        "hashly-md.pages.dev",
+        "hashly_session=pw__leaked-save-session",
+      );
+      const res = await handleSave(req, env);
+      expect(res.status).toBe(401);
+    });
+
+    it("continues to accept un-prefixed real session IDs in production (regression)", async () => {
+      // Like the proxy regression: confirm the gate does not fire for
+      // an un-prefixed cookie. Save will fail downstream (no real
+      // GitHub plumbing in this test), but the response MUST NOT be
+      // the 401 from the prefix gate.
+      const { namespace, store } = makeKV();
+      store.set("real-save-session", fixtureRecord());
+      const env = makeEnv({}, namespace);
+
+      const req = saveRequest(
+        "hashly-md.pages.dev",
+        "hashly_session=real-save-session",
+      );
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ message: "stub" }), { status: 500 });
+      try {
+        const res = await handleSave(req, env);
+        expect(res.status).not.toBe(401);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });
 
