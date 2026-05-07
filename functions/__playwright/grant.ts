@@ -13,6 +13,7 @@
 // 302-redirects to the validated same-origin `return` URL (default `/`).
 
 import type { Env } from "../_shared/env";
+import { isPlaywrightStubAllowed } from "../_shared/playwright-gate";
 
 const SESSION_COOKIE_NAME = "hashly_session";
 const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
@@ -26,9 +27,11 @@ function base64UrlEncode(bytes: Uint8Array): string {
 }
 
 function mintSessionId(): string {
+  // Crit 3 — `pw__` namespace prefix. Session readers refuse this
+  // prefix unless the same gate that mints them is currently allowed.
   const buf = new Uint8Array(24);
   crypto.getRandomValues(buf);
-  return base64UrlEncode(buf);
+  return `pw__${base64UrlEncode(buf)}`;
 }
 
 function fixtureRecord(scenario: Scenario): Record<string, unknown> {
@@ -60,7 +63,7 @@ function validateSameOriginReturn(rawReturn: string | null, requestUrl: string):
 export const onRequest: PagesFunction<Env> = async (ctx) => {
   const { request, env } = ctx;
 
-  if (env.PLAYWRIGHT_AUTH_STUB !== "1") {
+  if (!isPlaywrightStubAllowed(env, request)) {
     return new Response("not found", { status: 404 });
   }
 

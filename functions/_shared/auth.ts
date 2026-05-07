@@ -7,6 +7,7 @@
 // opaque session cookie.
 
 import type { Env } from "./env";
+import { isPlaywrightStubAllowed } from "./playwright-gate";
 
 const STATE_COOKIE_NAME = "hashly_oauth_state";
 const SESSION_COOKIE_NAME = "hashly_session";
@@ -199,7 +200,7 @@ export async function handleAuthStart(request: Request, env: Env): Promise<Respo
   // string-equality gate ensures any non-`"1"` value (including
   // undefined / "" / "0" / "true") falls through to the real GitHub
   // flow.
-  if (env.PLAYWRIGHT_AUTH_STUB === "1") {
+  if (isPlaywrightStubAllowed(env, request)) {
     const startUrl = new URL(request.url);
     const scenario = startUrl.searchParams.get("scenario") ?? "happy";
     const stubParams = new URLSearchParams({ state, scenario });
@@ -384,6 +385,12 @@ export async function handleSessionStatus(request: Request, env: Env): Promise<R
   const cookies = parseCookieHeader(request.headers.get("Cookie"));
   const sessionId = cookies[SESSION_COOKIE_NAME];
   if (!sessionId) {
+    return new Response("unauthorized", { status: 401 });
+  }
+  // Crit 3 — `pw__` namespace is reserved for the Playwright stub.
+  // Refuse to read prefixed IDs unless the same gate that mints them
+  // is currently authorized for this request (flag=1 + allowed host).
+  if (sessionId.startsWith("pw__") && !isPlaywrightStubAllowed(env, request)) {
     return new Response("unauthorized", { status: 401 });
   }
   const record = await env.SESSIONS.get(sessionId);
