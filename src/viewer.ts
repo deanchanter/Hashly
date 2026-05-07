@@ -294,14 +294,31 @@ export async function _remountAsReadOnly(
 // as inert text) so the surrounding prose is unaffected.
 const SAFE_URL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
+function normalizeUrlForSchemeMatch(value: string): string {
+  // Strip zero-width chars (ZWSP, ZWNJ, ZWJ, BOM) that browsers ignore
+  // when resolving the scheme but a naive regex would not.
+  const stripped = value.replace(/[​‌‍﻿]/g, '');
+  // Percent-decode once. Malformed sequences (e.g. lone `%`) throw —
+  // treat as suspicious by returning the stripped form so scheme match
+  // falls through to the disallowed branch if it was a scheme attempt.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(stripped);
+  } catch {
+    decoded = stripped;
+  }
+  return decoded.trim().toLowerCase();
+}
+
 function isSafeUrl(value: string): boolean {
   // Relative URLs (no scheme — `#section`, `./foo.md`, `foo.md`) are
   // safe. Detect a scheme by the same shape browsers use: optional
-  // leading whitespace, then `[a-zA-Z][a-zA-Z0-9+.-]*:`.
-  const trimmed = value.trim();
-  const match = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(trimmed);
+  // leading whitespace, then `[a-zA-Z][a-zA-Z0-9+.-]*:`. Normalize
+  // first so zero-width and percent-encoded smuggling can't bypass.
+  const normalized = normalizeUrlForSchemeMatch(value);
+  const match = /^([a-z][a-z0-9+.-]*):/.exec(normalized);
   if (!match) return true; // no scheme → relative → safe
-  return SAFE_URL_SCHEMES.has(match[1]!.toLowerCase() + ':');
+  return SAFE_URL_SCHEMES.has(match[1]! + ':');
 }
 
 function sanitizeUrlAttributes(host: HTMLElement): void {
