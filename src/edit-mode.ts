@@ -126,6 +126,17 @@ export async function enterEditMode(
     editModeBaseShas.set(host, opts.baseSha);
   }
   ensureEditToolbar(host);
+
+  // Issue #158 / AC 4.4 — Cmd+S (Mac) / Ctrl+S (other) triggers the
+  // same save path as the toolbar Save button. The per-host
+  // `pendingSaves` lock in `onSaveClick` covers both input sources,
+  // so rapid Cmd+S during an in-flight save is dropped.
+  host.addEventListener('keydown', (ev) => {
+    if (!(ev.metaKey || ev.ctrlKey)) return;
+    if ((ev.key || '').toLowerCase() !== 's') return;
+    ev.preventDefault();
+    onSaveClick(host);
+  });
 }
 
 // Issue #92 / AC 6.1 — Save button click handler. Scoped to the host
