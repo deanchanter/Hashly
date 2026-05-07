@@ -1,5 +1,7 @@
 // Issue #158 / AC 4.1 + 4.2 — Banner primitive.
 
+import './banner.css';
+
 export type BannerKind = 'info' | 'success' | 'warning' | 'error' | 'conflict';
 
 export interface BannerAction {
@@ -23,8 +25,8 @@ const ICON_BY_KIND: Record<BannerKind, string> = {
   info: 'i',
   success: '✓',
   warning: '!',
-  error: '×',
-  conflict: '!',
+  error: '⚠',
+  conflict: '⧉',
 };
 
 function roleFor(kind: BannerKind): 'status' | 'alert' {
@@ -58,6 +60,8 @@ export function showBanner(host: HTMLElement, opts: ShowBannerOpts): BannerHandl
     actionBtn.type = 'button';
     actionBtn.setAttribute('data-testid', 'banner-action');
     actionBtn.textContent = opts.action.label;
+    actionBtn.style.minWidth = '44px';
+    actionBtn.style.minHeight = '44px';
     actionBtn.addEventListener('click', () => {
       opts.action!.onClick();
     });
@@ -91,11 +95,31 @@ export function showBanner(host: HTMLElement, opts: ShowBannerOpts): BannerHandl
     dismissBtn.type = 'button';
     dismissBtn.setAttribute('data-testid', 'banner-dismiss');
     dismissBtn.setAttribute('aria-label', 'Dismiss');
-    dismissBtn.textContent = '×';
+    // Issue #158 fix-loop iter-1 / critical #6 — distinct glyph from
+    // the error-kind icon ('⚠'). '✕' (U+2715) is visually a close-X
+    // and SR-distinguishable from the kind-icon glyphs.
+    dismissBtn.textContent = '✕';
+    // Issue #158 fix-loop iter-1 / critical #1 — WCAG 2.5.5 touch
+    // target. Set inline so jsdom can verify; CSS module also applies
+    // in production.
+    dismissBtn.style.minWidth = '44px';
+    dismissBtn.style.minHeight = '44px';
     dismissBtn.addEventListener('click', () => {
       dismiss();
     });
     el.appendChild(dismissBtn);
+
+    // Issue #158 fix-loop iter-1 / critical #2 — Esc dismisses a
+    // dismissible banner. Listener attached to the banner element so
+    // a non-dismissible banner gets no listener (Esc is a no-op
+    // there). Bubbling tests (dispatch on banner.element) trigger
+    // this directly.
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        dismiss();
+      }
+    });
   }
 
   host.appendChild(el);

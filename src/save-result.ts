@@ -116,7 +116,20 @@ export function renderSaveConflict(
   copyBtn.className = 'hashly-save-conflict__copy';
   copyBtn.addEventListener('click', () => {
     const content = opts.getContent();
-    void navigator.clipboard.writeText(content);
+    void Promise.resolve(navigator.clipboard.writeText(content)).then(() => {
+      // Issue #158 fix-loop iter-1 / critical #7 — visible "Copied"
+      // feedback. Conflict is the only recovery path; silent copy is
+      // unacceptable.
+      let feedback = handle.element.querySelector<HTMLElement>(
+        '.hashly-save-conflict__feedback',
+      );
+      if (!feedback) {
+        feedback = document.createElement('span');
+        feedback.className = 'hashly-save-conflict__feedback';
+        handle.element.appendChild(feedback);
+      }
+      feedback.textContent = ' Copied';
+    });
   });
   handle.element.appendChild(copyBtn);
 

@@ -391,7 +391,17 @@ export async function attemptEditAction(
         message: 'Redirecting to GitHub…',
       });
       const returnParam = encodeURIComponent(window.location.href);
-      window.location.assign(`/auth/start?return=${returnParam}`);
+      // Issue #158 fix-loop iter-1 / critical #5 — defer assign to
+      // the next macrotask so the live region exists in DOM for ≥ 1
+      // tick before navigation (SR announcement window). Awaited so
+      // existing AC 5.2 tests that check `assignSpy` synchronously
+      // after `await attemptEditAction(host)` keep working.
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          window.location.assign(`/auth/start?return=${returnParam}`);
+          resolve();
+        }, 0);
+      });
       return undefined;
     } finally {
       pendingAttempt = null;
@@ -411,13 +421,16 @@ const AUTH_CANCELLED_TESTID = 'auth-cancelled';
 function renderAuthCancelledBanner(host: HTMLElement): void {
   if (typeof document === 'undefined') return;
   if (document.querySelector(`[data-testid="${AUTH_CANCELLED_TESTID}"]`)) return;
-  const banner = document.createElement('div');
-  banner.setAttribute('data-testid', AUTH_CANCELLED_TESTID);
-  banner.setAttribute('role', 'status');
-  banner.className = 'hashly-auth-cancelled';
-  banner.textContent =
-    "Sign-in cancelled — you didn't sign in. Try editing again to retry.";
-  host.prepend(banner);
+  // Issue #158 fix-loop iter-1 / critical #4 — built on showBanner.
+  const handle = showBanner(host, {
+    kind: 'info',
+    message:
+      "Sign-in cancelled — you didn't sign in. Try editing again to retry.",
+    dismissible: true,
+  });
+  handle.element.setAttribute('data-testid', AUTH_CANCELLED_TESTID);
+  handle.element.classList.add('hashly-auth-cancelled');
+  host.prepend(handle.element);
 }
 
 // Issue #91 / AC 5.5 + fix-loop-3 / fix #2 — Resolve write access for
@@ -470,28 +483,29 @@ const VIEW_ONLY_LOCK_TESTID = 'view-only-lock';
 function renderViewOnlyLock(host: HTMLElement): void {
   if (typeof document === 'undefined') return;
   if (document.querySelector(`[data-testid="${VIEW_ONLY_LOCK_TESTID}"]`)) return;
-  const banner = document.createElement('div');
-  banner.setAttribute('data-testid', VIEW_ONLY_LOCK_TESTID);
-  banner.setAttribute('role', 'status');
-  banner.className = 'hashly-view-only-lock';
-  const message = document.createElement('span');
-  message.textContent =
-    "View-only — you don't have write access to this repo. Ask the dev to add you.";
-  banner.appendChild(message);
+  // Issue #158 fix-loop iter-1 / critical #4 — built on showBanner.
+  const handle = showBanner(host, {
+    kind: 'warning',
+    message:
+      "View-only — you don't have write access to this repo. Ask the dev to add you.",
+    dismissible: true,
+  });
+  handle.element.setAttribute('data-testid', VIEW_ONLY_LOCK_TESTID);
+  handle.element.classList.add('hashly-view-only-lock');
 
-  // Issue #158 / AC 4.7 — "back to read-only view" recovery
-  // affordance. Removes the lock banner so the user can keep reading
-  // the rendered markdown without the banner cluttering the surface.
+  // Issue #158 / AC 4.7 — explicit "Back to read-only view"
+  // affordance (text contains "back" + "read"). Removes the lock
+  // banner so the user can keep reading the rendered markdown.
   const backBtn = document.createElement('button');
   backBtn.type = 'button';
   backBtn.textContent = 'Back to read-only view';
   backBtn.className = 'hashly-view-only-lock__back';
+  backBtn.style.minWidth = '44px';
+  backBtn.style.minHeight = '44px';
   backBtn.addEventListener('click', () => {
-    if (banner.parentNode) banner.parentNode.removeChild(banner);
+    handle.dismiss();
   });
-  banner.appendChild(backBtn);
+  handle.element.appendChild(backBtn);
 
-  // Issue #91 fix-loop-1 / fix #4 — banner ABOVE the editor body so
-  // the user sees it without scrolling past the rendered markdown.
-  host.prepend(banner);
+  host.prepend(handle.element);
 }
