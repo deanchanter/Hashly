@@ -62,12 +62,21 @@ export function enforceOriginAndMethod(
   request: Request,
   opts: OriginGateOptions,
 ): Response | null {
-  const origin = request.headers.get("Origin");
-  if (origin === null || !originMatches(origin, opts.allowedOrigins)) {
-    return rejection(403);
-  }
+  // Method check first so wrong-method requests (e.g. GET /api/save) get
+  // 405 even with foreign/missing Origin — closes the SPA-fallback hole
+  // (#148) without depending on Origin discipline.
   if (!opts.allowedMethods.includes(request.method)) {
     return rejection(405);
+  }
+  const origin = request.headers.get("Origin");
+  const isSafeMethod = request.method === "GET" || request.method === "HEAD";
+  if (origin === null) {
+    // Top-level safe-method navigation (browser bar, GitHub OAuth redirect)
+    // omits Origin — let GET/HEAD pass; unsafe methods still 403.
+    return isSafeMethod ? null : rejection(403);
+  }
+  if (!originMatches(origin, opts.allowedOrigins)) {
+    return rejection(403);
   }
   return null;
 }
