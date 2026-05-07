@@ -22,7 +22,20 @@ function messageFor(error: FetchFailure): string {
   }
 }
 
-export function renderViewerError(host: HTMLElement, error: FetchFailure): void {
+export interface RenderViewerErrorOpts {
+  // Issue #158 / AC 4.8 — optional recovery affordances. Rendered
+  // INSIDE the [role="alert"] element so the existing AC 4.7 textid
+  // pins keep matching (textContent of the alert still contains the
+  // per-kind message).
+  onRetry?: () => void;
+  onBack?: () => void;
+}
+
+export function renderViewerError(
+  host: HTMLElement,
+  error: FetchFailure,
+  opts: RenderViewerErrorOpts = {},
+): void {
   // Hard clear — same contract as renderFileError / renderLanding /
   // renderViewerHeader.
   host.innerHTML = '';
@@ -31,6 +44,32 @@ export function renderViewerError(host: HTMLElement, error: FetchFailure): void 
   alert.setAttribute('role', 'alert');
   alert.className = `viewer-error viewer-error--${error.kind}`;
   alert.setAttribute('data-kind', error.kind);
-  alert.textContent = messageFor(error);
+
+  const messageSpan = document.createElement('span');
+  messageSpan.textContent = messageFor(error);
+  alert.appendChild(messageSpan);
+
+  if (opts.onRetry) {
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.textContent = 'Retry';
+    retryBtn.className = 'viewer-error__retry';
+    retryBtn.addEventListener('click', () => {
+      opts.onRetry!();
+    });
+    alert.appendChild(retryBtn);
+  }
+
+  if (opts.onBack) {
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.textContent = 'Back to landing';
+    backBtn.className = 'viewer-error__back';
+    backBtn.addEventListener('click', () => {
+      opts.onBack!();
+    });
+    alert.appendChild(backBtn);
+  }
+
   host.appendChild(alert);
 }

@@ -20,6 +20,7 @@ import { renderViewerError } from './viewer-error';
 import { mountViewer } from './viewer';
 import { attemptEditAction, PENDING_EDIT_KEY } from './edit-mode';
 import { mountSessionIndicator } from './session-indicator';
+import { showBanner, type BannerHandle } from './ui/banner';
 
 export type EditorMode = 'read' | 'edit';
 
@@ -116,9 +117,39 @@ async function bootstrapWeb(
   renderViewerHeader(headerHost, parsed, () => {
     void attemptEditAction(host);
   });
-  const result = await fetchSpec(parsed.repo, parsed.ref, parsed.path);
+
+  // Issue #158 / AC 4.9 — visible loading indicator while the spec
+  // fetch is in flight. Dismissed before mountViewer (success) or
+  // before renderViewerError (failure).
+  let loadingBanner: BannerHandle | null = showBanner(host, {
+    kind: 'info',
+    message: 'Loading spec…',
+  });
+  const dismissLoading = (): void => {
+    if (loadingBanner) {
+      try { loadingBanner.dismiss(); } catch { /* noop */ }
+      loadingBanner = null;
+    }
+  };
+
+  let result: Awaited<ReturnType<typeof fetchSpec>>;
+  try {
+    result = await fetchSpec(parsed.repo, parsed.ref, parsed.path);
+  } finally {
+    dismissLoading();
+  }
   if (!result.ok) {
-    renderViewerError(host, result);
+    // Issue #158 / AC 4.8 — failure surface includes retry + back
+    // affordances and updates document.title (#108).
+    document.title = `Couldn't load spec — Hashly`;
+    renderViewerError(host, result, {
+      onRetry: () => {
+        void bootstrapWeb(host, headerHost, href);
+      },
+      onBack: () => {
+        renderLanding(host, 'Paste a GitHub spec URL to get started.');
+      },
+    });
     return;
   }
   try {
