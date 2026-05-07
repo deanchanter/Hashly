@@ -33,7 +33,7 @@ async function callback(opts: CallbackOpts = {}): Promise<Response> {
   }
   const qs = params.toString();
   const url = `https://worker.test/auth/callback${qs ? "?" + qs : ""}`;
-  const headers: HeadersInit = {};
+  const headers: Record<string, string> = { Origin: "https://worker.test" };
   if (opts.cookie) headers["Cookie"] = opts.cookie;
   return (exports as any).default.fetch(url, { headers, redirect: "manual" });
 }

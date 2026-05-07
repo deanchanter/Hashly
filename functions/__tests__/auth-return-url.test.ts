@@ -75,7 +75,10 @@ async function startAuth(returnUrl?: string): Promise<Response> {
   if (returnUrl !== undefined) {
     url.searchParams.set("return", returnUrl);
   }
-  return (exports as any).default.fetch(url.toString(), { redirect: "manual" });
+  return (exports as any).default.fetch(url.toString(), {
+    redirect: "manual",
+    headers: { Origin: "https://worker.test" },
+  });
 }
 
 /**
@@ -107,7 +110,7 @@ async function authRoundTrip(returnUrl?: string): Promise<Response> {
   callbackUrl.searchParams.set("setup_action", "install");
 
   return (exports as any).default.fetch(callbackUrl.toString(), {
-    headers: { Cookie: `${STATE_COOKIE_NAME}=${stateCookieValue}` },
+    headers: { Cookie: `${STATE_COOKIE_NAME}=${stateCookieValue}`, Origin: "https://worker.test" },
     redirect: "manual",
   });
 }
@@ -223,7 +226,7 @@ describe("/auth/callback — uses threaded return URL (AC 5.3)", () => {
     const res = await (exports as any).default.fetch(
       "https://worker.test/auth/callback?state=mismatched&installation_id=42",
       {
-        headers: { Cookie: `${STATE_COOKIE_NAME}=stashed-cookie-value-with-different-nonce` },
+        headers: { Cookie: `${STATE_COOKIE_NAME}=stashed-cookie-value-with-different-nonce`, Origin: "https://worker.test" },
         redirect: "manual",
       },
     );

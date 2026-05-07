@@ -23,7 +23,10 @@ async function startAuth(): Promise<Response> {
   // `redirect: "manual"` ensures we observe the 302 itself rather than the
   // pool transparently following it to github.com (which would also fail in
   // an offline test sandbox).
-  return (exports as any).default.fetch("https://worker.test/auth/start", { redirect: "manual" });
+  return (exports as any).default.fetch("https://worker.test/auth/start", {
+    redirect: "manual",
+    headers: { Origin: "https://worker.test" },
+  });
 }
 
 describe("GET /auth/start (AUTH_METHOD=app, the default)", () => {
