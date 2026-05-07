@@ -181,6 +181,118 @@ describe("AC 2.1/2.4 — enforceOriginAndMethod contract", () => {
   });
 });
 
+// Issue #156 — security re-review fix: top-level GET browser
+// navigations (address bar, cross-site redirects from GitHub OAuth)
+// don't send `Origin`. The original gate's "missing Origin → 403
+// universally" rule made `/auth/start`, `/auth/callback`, and the
+// 405-on-`GET /api/save` path all unreachable in real browsers.
+//
+// Refined contract:
+//   - Method check happens FIRST. Wrong method → 405 regardless of
+//     what (or whether) the Origin header carries.
+//   - If method ∈ {GET, HEAD}: missing Origin is OK (safe-method
+//     top-level nav). Present Origin must still be in the allowlist.
+//   - If method is unsafe (POST/PUT/DELETE/PATCH): missing OR foreign
+//     Origin → 403 (unchanged).
+describe("AC 2.4 refined — safe-method Origin handling + method-first ordering", () => {
+  it("GET with no Origin passes when GET is in allowedMethods (top-level nav)", () => {
+    // Pin: a user pasting `/auth/start` into their address bar must
+    // not be 403'd. Browsers send no Origin for top-level GET nav.
+    const req = makeReq("https://hashly-md.pages.dev/auth/start", {
+      method: "GET",
+      origin: null,
+    });
+    const result = enforceOriginAndMethod(req, {
+      allowedMethods: ["GET"],
+      allowedOrigins: ALLOWED,
+    });
+    expect(
+      result,
+      "missing Origin on a safe-method route must pass (top-level GET nav has no Origin header).",
+    ).toBeNull();
+  });
+
+  it("HEAD with no Origin passes when HEAD is in allowedMethods", () => {
+    // HEAD is the other CORS-defined safe method. Same rationale.
+    const req = makeReq("https://hashly-md.pages.dev/auth/start", {
+      method: "HEAD",
+      origin: null,
+    });
+    const result = enforceOriginAndMethod(req, {
+      allowedMethods: ["GET", "HEAD"],
+      allowedOrigins: ALLOWED,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("GET with foreign Origin still 403s (CSRF-like attempts via image/link tags get blocked)", () => {
+    // If Origin is present (e.g. an attacker page tried `fetch(...,
+    // {credentials: 'include'})` and got Origin auto-attached) and
+    // is NOT in allowlist, we still 403 — the safe-method relaxation
+    // applies only to the *missing* Origin case.
+    const req = makeReq("https://hashly-md.pages.dev/auth/start", {
+      method: "GET",
+      origin: "https://evil.example",
+    });
+    const result = enforceOriginAndMethod(req, {
+      allowedMethods: ["GET"],
+      allowedOrigins: ALLOWED,
+    });
+    expect(result, "foreign Origin on GET must still be rejected").not.toBeNull();
+    expect((result as Response).status).toBe(403);
+  });
+
+  it("GET to a route that does NOT allow GET → 405, even with no Origin (method check first)", () => {
+    // Closes #148: `GET /api/save` → 405 even though browser sends
+    // no Origin on the address-bar nav. If origin checking ran first
+    // it would 403 here and the SPA fallback / asset CDN would still
+    // potentially re-skin a 403; we want a clean 405 unconditionally.
+    const req = makeReq("https://hashly-md.pages.dev/api/save", {
+      method: "GET",
+      origin: null,
+    });
+    const result = enforceOriginAndMethod(req, {
+      allowedMethods: ["POST"],
+      allowedOrigins: ALLOWED,
+    });
+    expect(result, "wrong method must short-circuit before Origin is inspected").not.toBeNull();
+    expect((result as Response).status).toBe(405);
+  });
+
+  it("POST to a route that does NOT allow POST → 405, even with foreign Origin (method check first)", () => {
+    // Symmetric pin: even an obviously-malicious foreign Origin
+    // doesn't escalate the wrong-method response from 405 to 403.
+    // Disclosing 405 vs 403 is irrelevant; ordering matters because
+    // the SPA-fallback hazard (#148) is method-shaped, not origin-shaped.
+    const req = makeReq("https://hashly-md.pages.dev/auth/start", {
+      method: "POST",
+      origin: "https://evil.example",
+    });
+    const result = enforceOriginAndMethod(req, {
+      allowedMethods: ["GET"],
+      allowedOrigins: ALLOWED,
+    });
+    expect(result).not.toBeNull();
+    expect((result as Response).status).toBe(405);
+  });
+
+  it("POST with no Origin still 403s (unchanged — unsafe method requires Origin)", () => {
+    // Regression hook: the safe-method relaxation must NOT bleed into
+    // unsafe methods. A missing Origin on POST is still a CSRF risk
+    // (no header from same-origin context = misconfigured/foreign).
+    const req = makeReq("https://hashly-md.pages.dev/api/save", {
+      method: "POST",
+      origin: null,
+    });
+    const result = enforceOriginAndMethod(req, {
+      allowedMethods: ["POST"],
+      allowedOrigins: ALLOWED,
+    });
+    expect(result).not.toBeNull();
+    expect((result as Response).status).toBe(403);
+  });
+});
+
 describe("AC 2.2 — resolveAllowedOrigins(env)", () => {
   it("returns the default list when env.ALLOWED_ORIGINS is unset", () => {
     const list = resolveAllowedOrigins({} as never);
