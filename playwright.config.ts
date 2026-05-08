@@ -30,7 +30,12 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npx wrangler pages dev --port 8788 dist",
+    // `wrangler pages dev` does NOT automatically forward shell env vars
+    // into the worker runtime — only `.dev.vars` and `--var` reach the
+    // bindings. Pass PLAYWRIGHT_AUTH_STUB via `--var` so the stub gate
+    // sees it. The value still flows from the shell (Playwright sets it
+    // via `webServer.env`), so CI / local toggling works the same way.
+    command: `npx wrangler pages dev dist --port 8788 --kv SESSIONS --binding PLAYWRIGHT_AUTH_STUB=${process.env.PLAYWRIGHT_AUTH_STUB ?? "1"}`,
     url: "http://localhost:8788/health",
     timeout: 120_000,
     reuseExistingServer: !process.env.CI,
