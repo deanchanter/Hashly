@@ -9,28 +9,22 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("origin + method gate on /api/save (AC 5.12)", () => {
-  test("cross-origin POST is rejected with 403", async ({ page }) => {
-    // Land on the same origin first so `fetch` runs with that
-    // document's origin. Override the Origin header to a hostile
-    // value — the worker must reject it regardless of body shape.
-    await page.goto("/health");
-
-    const result = await page.evaluate(async () => {
-      const res = await fetch("/api/save", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          // The worker reads `request.headers.get('Origin')`. Browser
-          // semantics will normally set Origin automatically; setting
-          // it explicitly here is a regression probe for the gate.
-          Origin: "https://evil.example",
-        },
-        body: JSON.stringify({}),
-      });
-      return { status: res.status };
+  test("cross-origin POST is rejected with 403", async ({ playwright }) => {
+    // Origin is on the Fetch spec's forbidden-header list, so a
+    // browser-side fetch can't actually transmit a hostile Origin —
+    // Chrome silently strips it and substitutes the document origin.
+    // Use Playwright's APIRequestContext (server-to-server, no
+    // browser sandbox) to send a real cross-origin Origin header.
+    const ctx = await playwright.request.newContext();
+    const res = await ctx.post("http://localhost:8788/api/save", {
+      headers: {
+        "content-type": "application/json",
+        Origin: "https://evil.example",
+      },
+      data: {},
     });
-
-    expect(result.status).toBe(403);
+    expect(res.status()).toBe(403);
+    await ctx.dispose();
   });
 
   test("GET /api/save returns 405 (method not allowed)", async ({ page }) => {
