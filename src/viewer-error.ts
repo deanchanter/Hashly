@@ -1,11 +1,10 @@
 // Issue #90 / AC 4.7 — Error states for failed spec fetch.
-//
-// Renders a static `[role="alert"]` surface explaining one of the four
-// `fetchSpec` failure kinds (not-found / forbidden / network / other).
-// Each kind produces distinct, actionable copy so the user can tell
-// "wrong URL" apart from "offline" apart from "GitHub down".
+// Issue #158 fix-loop iter-1 / critical #3 — refactored onto the
+// banner primitive so the surface inherits centralized styling +
+// dismiss + action affordances.
 
 import type { FetchSpecResult } from './fetch-spec';
+import { showBanner } from './ui/banner';
 
 type FetchFailure = Extract<FetchSpecResult, { ok: false }>;
 
@@ -22,15 +21,43 @@ function messageFor(error: FetchFailure): string {
   }
 }
 
-export function renderViewerError(host: HTMLElement, error: FetchFailure): void {
+export interface RenderViewerErrorOpts {
+  onRetry?: () => void;
+  onBack?: () => void;
+}
+
+export function renderViewerError(
+  host: HTMLElement,
+  error: FetchFailure,
+  opts: RenderViewerErrorOpts = {},
+): void {
   // Hard clear — same contract as renderFileError / renderLanding /
   // renderViewerHeader.
   host.innerHTML = '';
 
-  const alert = document.createElement('div');
-  alert.setAttribute('role', 'alert');
-  alert.className = `viewer-error viewer-error--${error.kind}`;
-  alert.setAttribute('data-kind', error.kind);
-  alert.textContent = messageFor(error);
-  host.appendChild(alert);
+  const handle = showBanner(host, {
+    kind: 'error',
+    message: messageFor(error),
+    dismissible: true,
+    ...(opts.onRetry
+      ? { action: { label: 'Retry', onClick: opts.onRetry } }
+      : {}),
+  });
+  // Preserve the per-kind data attribute the existing AC 4.7 tests
+  // pin alongside role="alert".
+  handle.element.classList.add('viewer-error', `viewer-error--${error.kind}`);
+  handle.element.setAttribute('data-kind', error.kind);
+
+  if (opts.onBack) {
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.textContent = 'Back to landing';
+    backBtn.className = 'viewer-error__back';
+    backBtn.style.minWidth = '44px';
+    backBtn.style.minHeight = '44px';
+    backBtn.addEventListener('click', () => {
+      opts.onBack!();
+    });
+    handle.element.appendChild(backBtn);
+  }
 }

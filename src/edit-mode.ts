@@ -36,6 +36,7 @@ import {
   renderSaveError,
   renderSaveSuccess,
 } from './save-result';
+import { showBanner } from './ui/banner';
 
 // Per-host edit-mode editor registry. Doubles as the idempotency
 // guard: a second call to `enterEditMode` for a host already in edit
@@ -126,6 +127,17 @@ export async function enterEditMode(
     editModeBaseShas.set(host, opts.baseSha);
   }
   ensureEditToolbar(host);
+
+  // Issue #158 / AC 4.4 — Cmd+S (Mac) / Ctrl+S (other) triggers the
+  // same save path as the toolbar Save button. The per-host
+  // `pendingSaves` lock in `onSaveClick` covers both input sources,
+  // so rapid Cmd+S during an in-flight save is dropped.
+  host.addEventListener('keydown', (ev) => {
+    if (!(ev.metaKey || ev.ctrlKey)) return;
+    if ((ev.key || '').toLowerCase() !== 's') return;
+    ev.preventDefault();
+    onSaveClick(host);
+  });
 }
 
 // Issue #92 / AC 6.1 — Save button click handler. Scoped to the host
@@ -369,8 +381,27 @@ export async function attemptEditAction(
         // edge cases. The redirect still proceeds; the user just
         // won't get the auto-restore.
       }
+      // Issue #158 / AC 4.6 — visible "redirecting…" indicator before
+      // the navigation lands. Renders a role="status" banner so SR
+      // users hear the announcement and sighted users get visual
+      // feedback during the brief window between fetch resolution
+      // and the GitHub auth screen painting.
+      showBanner(host, {
+        kind: 'info',
+        message: 'Redirecting to GitHub…',
+      });
       const returnParam = encodeURIComponent(window.location.href);
-      window.location.assign(`/auth/start?return=${returnParam}`);
+      // Issue #158 fix-loop iter-1 / critical #5 — defer assign to
+      // the next macrotask so the live region exists in DOM for ≥ 1
+      // tick before navigation (SR announcement window). Awaited so
+      // existing AC 5.2 tests that check `assignSpy` synchronously
+      // after `await attemptEditAction(host)` keep working.
+      await new Promise<void>((resolve) => {
+        setTimeout(() => {
+          window.location.assign(`/auth/start?return=${returnParam}`);
+          resolve();
+        }, 0);
+      });
       return undefined;
     } finally {
       pendingAttempt = null;
@@ -390,13 +421,16 @@ const AUTH_CANCELLED_TESTID = 'auth-cancelled';
 function renderAuthCancelledBanner(host: HTMLElement): void {
   if (typeof document === 'undefined') return;
   if (document.querySelector(`[data-testid="${AUTH_CANCELLED_TESTID}"]`)) return;
-  const banner = document.createElement('div');
-  banner.setAttribute('data-testid', AUTH_CANCELLED_TESTID);
-  banner.setAttribute('role', 'status');
-  banner.className = 'hashly-auth-cancelled';
-  banner.textContent =
-    "Sign-in cancelled — you didn't sign in. Try editing again to retry.";
-  host.prepend(banner);
+  // Issue #158 fix-loop iter-1 / critical #4 — built on showBanner.
+  const handle = showBanner(host, {
+    kind: 'info',
+    message:
+      "Sign-in cancelled — you didn't sign in. Try editing again to retry.",
+    dismissible: true,
+  });
+  handle.element.setAttribute('data-testid', AUTH_CANCELLED_TESTID);
+  handle.element.classList.add('hashly-auth-cancelled');
+  host.prepend(handle.element);
 }
 
 // Issue #91 / AC 5.5 + fix-loop-3 / fix #2 — Resolve write access for
@@ -449,13 +483,29 @@ const VIEW_ONLY_LOCK_TESTID = 'view-only-lock';
 function renderViewOnlyLock(host: HTMLElement): void {
   if (typeof document === 'undefined') return;
   if (document.querySelector(`[data-testid="${VIEW_ONLY_LOCK_TESTID}"]`)) return;
-  const banner = document.createElement('div');
-  banner.setAttribute('data-testid', VIEW_ONLY_LOCK_TESTID);
-  banner.setAttribute('role', 'status');
-  banner.className = 'hashly-view-only-lock';
-  banner.textContent =
-    "View-only — you don't have write access to this repo. Ask the dev to add you.";
-  // Issue #91 fix-loop-1 / fix #4 — banner ABOVE the editor body so
-  // the user sees it without scrolling past the rendered markdown.
-  host.prepend(banner);
+  // Issue #158 fix-loop iter-1 / critical #4 — built on showBanner.
+  const handle = showBanner(host, {
+    kind: 'warning',
+    message:
+      "View-only — you don't have write access to this repo. Ask the dev to add you.",
+    dismissible: true,
+  });
+  handle.element.setAttribute('data-testid', VIEW_ONLY_LOCK_TESTID);
+  handle.element.classList.add('hashly-view-only-lock');
+
+  // Issue #158 / AC 4.7 — explicit "Back to read-only view"
+  // affordance (text contains "back" + "read"). Removes the lock
+  // banner so the user can keep reading the rendered markdown.
+  const backBtn = document.createElement('button');
+  backBtn.type = 'button';
+  backBtn.textContent = 'Back to read-only view';
+  backBtn.className = 'hashly-view-only-lock__back';
+  backBtn.style.minWidth = '44px';
+  backBtn.style.minHeight = '44px';
+  backBtn.addEventListener('click', () => {
+    handle.dismiss();
+  });
+  handle.element.appendChild(backBtn);
+
+  host.prepend(handle.element);
 }
