@@ -14,4 +14,9 @@ export interface Env {
   SESSION_HMAC_KEY: string;
   AUTH_METHOD: "app" | "oauth-app";
   ALLOWED_ORIGINS?: string;
+  // Issue #159 / AC 5.6 — Playwright auth-stub gate. Must remain undefined
+  // in production. When the value is exactly the string "1" (and only "1"),
+  // `/__playwright/grant` becomes reachable and `handleAuthStart` redirects
+  // there instead of GitHub. Any other value MUST be inert.
+  PLAYWRIGHT_AUTH_STUB?: string;
 }

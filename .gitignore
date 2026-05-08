@@ -20,3 +20,8 @@ dist-functions/
 # ship-milestone skill scratch — local-only run log
 specs/**/ship-milestone-scratch.md
 .claude/.ship-milestone.*.scratch.md
+
+# Playwright e2e (issue #159)
+playwright/.cache/
+test-results/
+playwright-report/
