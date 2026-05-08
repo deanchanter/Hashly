@@ -31,8 +31,30 @@ import { installBrokenImageFallback } from './broken-image-fallback';
 // so multiple mounts in the same DOM stay independent.
 const mountedViewers = new WeakMap<
   HTMLElement,
-  { editor: Editor; frontmatter: string | null }
+  {
+    editor: Editor;
+    frontmatter: string | null;
+    sanitizerObserver?: MutationObserver | null;
+  }
 >();
+
+// Issue #157 / AC 3.3 — install a MutationObserver on the read-only
+// viewer host so post-mount DOM mutations (decorations, late-arriving
+// nodes, attribute rewrites) re-run `sanitizeUrlAttributes`. Returns
+// the observer so callers can stash it on the per-host entry and
+// disconnect it before remount.
+function installSanitizerObserver(host: HTMLElement): MutationObserver {
+  const observer = new MutationObserver(() => {
+    sanitizeUrlAttributes(host);
+  });
+  observer.observe(host, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['href', 'src'],
+  });
+  return observer;
+}
 
 // Issue #91 / AC 5.6 — Capture the frontmatter-shaped prefix even when
 // the YAML inside is malformed. `parseFrontmatter` returns
@@ -114,7 +136,8 @@ export async function mountViewer(
     .create();
   sanitizeUrlAttributes(host);
   installBrokenImageFallback(host);
-  mountedViewers.set(host, { editor, frontmatter });
+  const sanitizerObserver = installSanitizerObserver(host);
+  mountedViewers.set(host, { editor, frontmatter, sanitizerObserver });
   return editor;
 }
 
@@ -155,6 +178,7 @@ export async function _remountAsEditable(
 ): Promise<Editor | null> {
   const entry = mountedViewers.get(host);
   if (!entry) return null;
+  entry.sanitizerObserver?.disconnect();
 
   const body = entry.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
@@ -211,7 +235,11 @@ export async function _remountAsEditable(
   installBrokenImageFallback(host);
   // Preserve the captured frontmatter byte-equal across the flip
   // (AC 5.6 cross-pin).
-  mountedViewers.set(host, { editor, frontmatter: entry.frontmatter });
+  mountedViewers.set(host, {
+    editor,
+    frontmatter: entry.frontmatter,
+    sanitizerObserver: null,
+  });
   return editor;
 }
 
@@ -230,6 +258,7 @@ export async function _remountAsReadOnly(
 ): Promise<Editor | null> {
   const entry = mountedViewers.get(host);
   if (!entry) return null;
+  entry.sanitizerObserver?.disconnect();
 
   const body = entry.editor.action((ctx) => {
     const view = ctx.get(editorViewCtx);
@@ -280,7 +309,12 @@ export async function _remountAsReadOnly(
     .create();
   sanitizeUrlAttributes(host);
   installBrokenImageFallback(host);
-  mountedViewers.set(host, { editor, frontmatter: entry.frontmatter });
+  const sanitizerObserver = installSanitizerObserver(host);
+  mountedViewers.set(host, {
+    editor,
+    frontmatter: entry.frontmatter,
+    sanitizerObserver,
+  });
   return editor;
 }
 
@@ -294,14 +328,36 @@ export async function _remountAsReadOnly(
 // as inert text) so the surrounding prose is unaffected.
 const SAFE_URL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
+// Strip-set: zero-width chars (ZWSP/ZWNJ/ZWJ/BOM) the WHATWG URL
+// parser ignores when resolving a scheme, plus ASCII tab/LF/CR/NUL
+// which the URL parser strips before scheme parsing. Either category
+// can be smuggled raw or percent-encoded so we apply the strip both
+// before and after a single percent-decode.
+const URL_NORMALIZE_STRIP_RE = /[\t\n\r\0​‌‍﻿]/g;
+
+function normalizeUrlForSchemeMatch(value: string): string {
+  const preDecode = value.replace(URL_NORMALIZE_STRIP_RE, '');
+  // Percent-decode once. Malformed sequences (e.g. lone `%`) throw —
+  // treat as suspicious by returning the stripped form so scheme match
+  // falls through to the disallowed branch if it was a scheme attempt.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(preDecode);
+  } catch {
+    decoded = preDecode;
+  }
+  return decoded.replace(URL_NORMALIZE_STRIP_RE, '').trim().toLowerCase();
+}
+
 function isSafeUrl(value: string): boolean {
   // Relative URLs (no scheme — `#section`, `./foo.md`, `foo.md`) are
   // safe. Detect a scheme by the same shape browsers use: optional
-  // leading whitespace, then `[a-zA-Z][a-zA-Z0-9+.-]*:`.
-  const trimmed = value.trim();
-  const match = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(trimmed);
+  // leading whitespace, then `[a-zA-Z][a-zA-Z0-9+.-]*:`. Normalize
+  // first so zero-width and percent-encoded smuggling can't bypass.
+  const normalized = normalizeUrlForSchemeMatch(value);
+  const match = /^([a-z][a-z0-9+.-]*):/.exec(normalized);
   if (!match) return true; // no scheme → relative → safe
-  return SAFE_URL_SCHEMES.has(match[1]!.toLowerCase() + ':');
+  return SAFE_URL_SCHEMES.has(match[1]! + ':');
 }
 
 function sanitizeUrlAttributes(host: HTMLElement): void {
