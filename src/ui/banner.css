@@ -1,0 +1,67 @@
+/* Issue #158 fix-loop iter-1 / critical #1 — banner primitive styling.
+ * Per-kind colors meet WCAG AA against the banner background. Dismiss
+ * button hits WCAG 2.5.5 (44×44 minimum touch target). Inline styles
+ * in banner.ts cover the test-time pins (jsdom can't compute imported
+ * CSS); these rules give production the visual treatment.
+ */
+
+[data-banner-kind] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0;
+  border-left: 4px solid;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+[data-banner-kind="info"] {
+  background: #eef4fb;
+  border-left-color: #1d6fc1;
+  color: #0c2d4d;
+}
+
+[data-banner-kind="success"] {
+  background: #ecf7ee;
+  border-left-color: #2c8a3a;
+  color: #0f3d18;
+}
+
+[data-banner-kind="warning"] {
+  background: #fdf3e1;
+  border-left-color: #c98214;
+  color: #4d3007;
+}
+
+[data-banner-kind="error"] {
+  background: #fbecec;
+  border-left-color: #b22222;
+  color: #4a0d0d;
+}
+
+[data-banner-kind="conflict"] {
+  background: #fdf0e6;
+  border-left-color: #b65814;
+  color: #4d2105;
+}
+
+[data-banner-kind] [data-testid="banner-icon"] {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+[data-banner-kind] [data-testid="banner-action"],
+[data-banner-kind] [data-testid="banner-dismiss"] {
+  cursor: pointer;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  padding: 0.4rem 0.75rem;
+}
+
+[data-banner-kind] [data-testid="banner-dismiss"] {
+  margin-left: auto;
+}
